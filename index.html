@@ -1472,18 +1472,29 @@
     });
     /* 导体：两条白线 + 横截面虚线 */
     var y = my(L, 0.34), x0 = mx(L, 0.02), x1 = mx(L, 0.98), hh = 46 * k;
-    Z.wirePath(ctx, [[x0, y - hh], [x1, y - hh]], { w: 3 * k });
-    Z.wirePath(ctx, [[x0, y + hh], [x1, y + hh]], { w: 3 * k });
-    var xc = (x0 + x1) / 2;
-    Z.wirePath(ctx, [[xc, y - hh - 26 * k], [xc, y + hh + 26 * k]], { color: 'rgba(255,255,255,0.7)', w: 2 * k, dash: [7, 5] });
-    Z.T(ctx, '横截面', xc, y - hh - 46 * k, { size: 20 * k, align: 'center', color: K.text });
-    Z.chargeFlow(ctx, [[x0, y], [x1, y]], 9, S.flowPhase, { kind: 'neg', r: 4.8 * k });
-    /* 时间条 */
-    var barY = my(L, 0.80), barW = (L.mx1 - L.mx0) * 0.66;
-    Z.wirePath(ctx, [[x0 + 20 * k, barY], [x0 + 20 * k + barW, barY]], { color: 'rgba(255,255,255,0.28)', w: 4 * k });
-    Z.wirePath(ctx, [[x0 + 20 * k, barY], [x0 + 20 * k + barW * Math.min(1, S.tdefine / 10), barY]], { color: K.neg, w: 4 * k });
-    Z.T(ctx, 't = ' + P.fmt(S.tdefine, 1) + ' s ｜ q = ' + P.fmt(S.qDefine, 3) + ' C',
-      x0 + 20 * k + barW + 24 * k, barY, { size: 20 * k, color: K.text });
+    D(ctx, S.r0, function () {
+      Z.wirePath(ctx, [[x0, y - hh], [x1, y - hh]], { w: 3 * k });
+      Z.wirePath(ctx, [[x0, y + hh], [x1, y + hh]], { w: 3 * k });
+      var xc = (x0 + x1) / 2;
+      Z.wirePath(ctx, [[xc, y - hh - 26 * k], [xc, y + hh + 26 * k]], { color: 'rgba(255,255,255,0.7)', w: 2 * k, dash: [7, 5] });
+      Z.T(ctx, '横截面', xc, y - hh - 46 * k, { size: 20 * k, align: 'center', color: K.text });
+    });
+    /* 电子持续穿过横截面；每穿过一个就闪一下（q 就是数这个） */
+    D(ctx, S.r1, function () {
+      Z.chargeFlow(ctx, [[x0, y], [x1, y]], 9, S.flowPhase, { kind: 'neg', r: 4.8 * k });
+      var xc = (x0 + x1) / 2;
+      var u = S.anim && !S.frozen ? Z2.wrap(-S.T * 0.18) : 0.17;
+      Z.burst111(ctx, xc, y, Z2.wrap(u * 9), { r: 26, color: K.negHi, k: k, a: 0.42 });
+      Z.trailDot(ctx, [[x0, y], [x1, y]], S.flowPhase, { r: 5, k: k });
+    });
+    /* 时间条：随 t 生长，扫到 10 s 再从 1 s 重来（自动演示） */
+    D(ctx, S.r2, function () {
+      var barY = my(L, 0.80), barW = (L.mx1 - L.mx0) * 0.66;
+      Z.wirePath(ctx, [[x0 + 20 * k, barY], [x0 + 20 * k + barW, barY]], { color: 'rgba(255,255,255,0.28)', w: 4 * k });
+      Z.wirePath(ctx, [[x0 + 20 * k, barY], [x0 + 20 * k + barW * Math.min(1, S.tdefine / 10), barY]], { color: K.neg, w: 4 * k });
+      Z.T(ctx, 't = ' + P.fmt(S.tdefine, 1) + ' s ｜ q = ' + P.fmt(S.qDefine, 3) + ' C ｜ n = ' + P.sci(S.nDefine, 2) + ' 个',
+        x0 + 20 * k + barW + 24 * k, barY, { size: 20 * k, color: K.text });
+    });
   }
 
   /* =====================================================================
@@ -1505,9 +1516,20 @@
     var lx = mx(L, 0.08), ly = my(L, 0.18);
     var rows = [['1 A', 'A'], ['1 mA = 10⁻³ A', 'mA'], ['1 μA = 10⁻⁶ A', 'μA']];
     for (var i = 0; i < rows.length; i++) {
-      var yy = ly + i * 62 * k;
-      var on = i + 1 === S.unitIdx + 1;
-      Z.M(ctx, rows[i][0], lx, yy, { size: 30 * k, color: on ? K.neg : K.text });
+      (function (i) {
+        D(ctx, S.rise(140 + i * 260, 420), function () {
+          var yy = ly + i * 62 * k;
+          var on = i + 1 === S.unitIdx + 1;
+          /* 当前单位持续呼吸 —— 切换单位时焦点看得见 */
+          var glow = on && S.anim && !S.frozen ? (0.72 + 0.28 * (0.5 - 0.5 * Math.cos(S.T * 2.6))) : 1;
+          ctx.save(); ctx.globalAlpha = glow;
+          Z.M(ctx, rows[i][0], lx, yy, { size: 30 * k, color: on ? K.neg : K.text });
+          if (on) {
+            Z.wirePath(ctx, [[lx - 16 * k, yy + 22 * k], [lx - 16 * k + 210 * k, yy + 22 * k]], { color: K.neg, w: 1.6 * k });
+          }
+          ctx.restore();
+        });
+      })(i);
     }
     /* 练习 1 板卡 */
     var rx = mx(L, 0.56), ry = my(L, 0.16);
@@ -1790,6 +1812,15 @@
     });
     var items = ['电源搬运电荷', '两极电势差不变', '导体内部恒定电场', '定向移动＋碰撞', '恒定电流'];
     var x0 = mx(L, 0.06), bw = (L.mx1 - L.mx0) * 0.88, bh = (L.my1 - L.my0) * 0.155;
+    /* 格间传递脉冲：一格一格往下串 —— "因果链"这个词，本身就是一个过程 */
+    if (S.anim && !S.frozen) {
+      var uu = Z2.wrap(S.T * 0.5) * 5;
+      var gi = Math.min(4, Math.floor(uu)), gf = uu - gi;
+      if (gi < 4) {
+        var yA = my(L, 0) + gi * (bh + 14 * k) + bh, yB = yA + 14 * k;
+        Z.charge(ctx, x0 + bw / 2, yA + (yB - yA) * gf, 5.4 * k, 'neg', { color: K.negHi });
+      }
+    }
     for (var i = 0; i < items.length; i++) {
       var on = S.chainP > i, y = my(L, 0) + i * (bh + 14 * k);
       ctx.save();
