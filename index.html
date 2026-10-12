@@ -344,2009 +344,1117 @@
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 <script>/* =====================================================================
-   he_kit.js —— HE 视觉体系渲染内核（伪 3D · Canvas 2D）
+   viz_dc_kit111.js —— 11.1 图元库（复刻参考片 BV1fnxdziE14 的画面语汇）
 
-   复现目标：本项目的通用视觉语言。规格见
-     _dev/he_kit/
-   取证帧：_ref/he_wuli/frames/（由 .tools/framegrab 从原视频逐帧取出）
-
-   本文件只画"长什么样"，不含任何物理量、不含步骤逻辑：
-     - 相机与投影   makeCam()
-     - 材质           MAT
-     - 立体图元       cylX / ringX / discX / discStackX / block3D / plate3D / boreX
-     - 电路图元       wire / acSource / fieldArrow / glowDot / beamCone / electronBeam
-     - 版面           watermark / brand / caption / bullets / titleBlock / legend
-     - 小图           insetVT / insetUT / insetAxes
-     - 文字           sans() / math() / textOn()
-   渲染层只读状态，物理内核在别处（viz_*_physics.js）。
+   复刻对象（画面语汇，不搬其品牌素材）：
+     · 纯黑底 + 细网格（白 α0.035，46px 一格）
+     · 直角折线导线（白 3px，尖角）
+     · 块体元件：电池（蓝灰渐变长块 + 深蓝正极端 + 接线柱）、电阻（蓝扁块 + R）
+     · 发光电荷点：白点 = 正电荷、青蓝点 = 负电荷/自由电子（shadowBlur 8）
+     · 电极板：灰色竖长条
+     · 右侧概念卡：[形成]/[定义]/[公式]/[方向] + 衬线斜体公式
+     · 左下常驻图例：● 正电荷  ● 负电荷（自由电子）
+     · 底部字幕：中文主句（English term）混排
+   色卡量取自原片高饱和像素聚类（H≈190–210° 青蓝系）。
    ===================================================================== */
 (function (global) {
   'use strict';
 
-  /* ============ 0. 色卡（从原视频帧量出，见视觉配方第二节） ============ */
-  var MAT = {
-    pos:    { hi: '#F4A8C6', mid: '#E06A96', lo: '#8E3F55', name: '正极' },
-    neg:    { hi: '#33C2DC', mid: '#0E8A96', lo: '#064C57', name: '负极' },
-    metal:  { hi: '#E6E6E6', mid: '#9C9C9C', lo: '#3E3E3E', name: '金属' },
-    dark:   { hi: '#9A9A9A', mid: '#5E5E5E', lo: '#242424', name: '暗金属' },
-    slate:  { hi: '#7E7E7E', mid: '#4E4E4E', lo: '#1C1C1C', name: '深灰' },
-    orange: { hi: '#FFB055', mid: '#F88008', lo: '#9E4E00', name: '电源' },
-    white:  { hi: '#FFFFFF', mid: '#DCDCDC', lo: '#8A8A8A', name: '白' },
-    ghost:  { hi: '#6E6E6E', mid: '#4A4A4A', lo: '#2A2A2A', name: '未带电' }
-  };
-  var C = {
-    pos: '#E06A96', neg: '#0E8A96', posHi: '#F4A8C6', negHi: '#33C2DC',
-    posLo: '#8E3F55', negLo: '#064C57',
-    cyan: '#05E8FD', orange: '#F88008', orangeHi: '#FFB055',
-    gold: '#F0AC5F', goldHi: '#FFD08A', goldLo: '#9E6A28',
-    white: '#FFFFFF', cap: '#F0F0F5', grey: '#B0B0B0', grey2: '#8A8A8A',
-    mark: '#FC6255', dim: '#1E1E1E', bg: '#000000'
-  };
   var FONT = '"Microsoft YaHei","PingFang SC","Noto Sans SC","WenQuanYi Zen Hei",sans-serif';
-  /* 英文标题用的是**衬线体**（量自参考帧：Times 系细衬线），与中文无衬线混排 */
-  var SERIF = '"Times New Roman",Times,"Liberation Serif","Nimbus Roman No9 L","Noto Serif",serif';
-  var MATH = '"Cambria Math","Latin Modern Math","Times New Roman",Georgia,serif';
+  var SERIF = '"Cambria Math","Times New Roman",Georgia,serif';
 
-  /* ============ 1. 相机与投影 ============ */
-  /* 世界坐标：+X 沿加速器轴（指向观察者右前）、+Y 向上、+Z 指向观察者
-     原视频机位约 yaw=35°, pitch=20°：+X → 屏幕右下，+Z → 屏幕左下 */
-  function makeCam(o) {
-    o = o || {};
-    var yaw = (o.yaw == null ? 35 : o.yaw) * Math.PI / 180;
-    var pitch = (o.pitch == null ? 20 : o.pitch) * Math.PI / 180;
-    var R = o.dist == null ? 10 : o.dist;
-    var tgt = o.target || [0, 0, 0];
-    var ex = tgt[0] + R * Math.cos(pitch) * Math.sin(yaw);
-    var ey = tgt[1] + R * Math.sin(pitch);
-    var ez = tgt[2] + R * Math.cos(pitch) * Math.cos(yaw);
-    var fx = tgt[0] - ex, fy = tgt[1] - ey, fz = tgt[2] - ez;
-    var fl = Math.hypot(fx, fy, fz); fx /= fl; fy /= fl; fz /= fl;
-    var rx = -fz, ry = 0, rz = fx;                       // cross(f, worldUp)
-    var rl = Math.hypot(rx, ry, rz) || 1; rx /= rl; ry /= rl; rz /= rl;
-    var ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx;
-    var f = o.focal == null ? 1400 : o.focal;
-    var cx = o.cx == null ? 0 : o.cx, cy = o.cy == null ? 0 : o.cy;
-
-    function proj(p) {
-      var dx = p[0] - ex, dy = p[1] - ey, dz = p[2] - ez;
-      var zc = dx * fx + dy * fy + dz * fz;
-      if (zc < 0.05) zc = 0.05;
-      var xc = dx * rx + dy * ry + dz * rz;
-      var yc = dx * ux + dy * uy + dz * uz;
-      var s = f / zc;
-      return { x: cx + xc * s, y: cy - yc * s, s: s, z: zc };
-    }
-    proj.eye = [ex, ey, ez];
-    proj.dirX = { x: rx, y: -ux };      // 世界 +X 在屏幕上的单位方向
-    proj.dirY = { x: ry, y: -uy };
-    proj.dirZ = { x: rz, y: -uz };
-    proj.focal = f;
-    proj.proj = proj;                   // 允许 cam.proj(p) 与 cam(p) 两种写法
-    return proj;
-  }
-
-  /* ============ 2. 通用小工具 ============ */
-  function lg(ctx, x0, y0, x1, y1, m, a, b) {
-    var g = ctx.createLinearGradient(x0, y0, x1, y1);
-    g.addColorStop(0, m.hi); g.addColorStop(a == null ? 0.30 : a, m.mid);
-    g.addColorStop(1, m.lo);
-    return g;
-  }
-  function vGrad(ctx, yTop, yBot, m, hiAt) {
-    var g = ctx.createLinearGradient(0, yTop, 0, yBot);
-    var h = hiAt == null ? 0.26 : hiAt;
-    g.addColorStop(0, m.lo); g.addColorStop(h, m.hi);
-    g.addColorStop(h + 0.28, m.mid); g.addColorStop(1, m.lo);
-    return g;
-  }
-  function ellipsePts(cam, x, r, n, axis) {
-    // 在 x=const 的平面上取半径 r 的圆（axis='x' → 圆在 YZ 平面）
-    var pts = [];
-    for (var i = 0; i <= n; i++) {
-      var a = i / n * Math.PI * 2;
-      pts.push(cam.proj(axis === 'y'
-        ? [r * Math.cos(a), x, r * Math.sin(a)]
-        : [x, r * Math.cos(a), r * Math.sin(a)]));
-    }
-    return pts;
-  }
-  function path(ctx, pts, close) {
-    ctx.beginPath();
-    for (var i = 0; i < pts.length; i++) {
-      if (i === 0) ctx.moveTo(pts[i].x, pts[i].y); else ctx.lineTo(pts[i].x, pts[i].y);
-    }
-    if (close !== false) ctx.closePath();
-  }
-  function clip(ctx, pts) { path(ctx, pts); ctx.clip(); }
-
-  /* 凸包（Andrew monotone chain）—— 圆柱/圆环的屏幕轮廓就是两端椭圆的凸包 */
-  function hull(pts) {
-    var p = pts.slice().sort(function (a, b) { return a.x - b.x || a.y - b.y; });
-    if (p.length < 3) return p;
-    var cross = function (o, a, b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); };
-    var lo = [], i;
-    for (i = 0; i < p.length; i++) {
-      while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p[i]) <= 0) lo.pop();
-      lo.push(p[i]);
-    }
-    var up = [];
-    for (i = p.length - 1; i >= 0; i--) {
-      while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], p[i]) <= 0) up.pop();
-      up.push(p[i]);
-    }
-    lo.pop(); up.pop();
-    return lo.concat(up);
-  }
-
-  /* ============ 3. 立体图元 ============ */
-
-  /* 沿 X 轴的圆柱（含远端/近端椭圆面），画完恢复 ctx 状态 */
-  function cylX(ctx, cam, x0, x1, r, mat, o) {
-    o = o || {};
-    var N = o.seg || 44;
-    var e0 = ellipsePts(cam, x0, r, N), e1 = ellipsePts(cam, x1, r, N);
-    var h = hull(e0.concat(e1));
-    var bb = bboxOf(h);
-    ctx.save();
-    path(ctx, h);
-    ctx.fillStyle = vGrad(ctx, bb.y0, bb.y1, mat, o.hiAt);
-    ctx.fill();
-    // 网格纹理（原视频的"肋纹"）
-    if (o.mesh !== false) {
-      ctx.save(); ctx.clip();
-      var rib = o.rib == null ? 3.2 : o.rib, i2;
-      ctx.strokeStyle = 'rgba(255,255,255,0.20)'; ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (i2 = Math.floor(bb.x0); i2 < bb.x1; i2 += rib) { ctx.moveTo(i2, bb.y0); ctx.lineTo(i2, bb.y1); }
-      ctx.stroke();
-      ctx.strokeStyle = 'rgba(255,255,255,0.13)';
-      ctx.beginPath();
-      for (i2 = Math.floor(bb.y0); i2 < bb.y1; i2 += 5.5) { ctx.moveTo(bb.x0, i2); ctx.lineTo(bb.x1, i2); }
-      ctx.stroke();
-      ctx.restore();
-    }
-    // 近端（+X）端面轮廓：原视频里能看到筒口的椭圆
-    if (o.cap !== false) {
-      var bb1 = bboxOf(e1);
-      path(ctx, e1);
-      var g1 = ctx.createLinearGradient(0, bb1.y0, 0, bb1.y1);
-      g1.addColorStop(0, 'rgba(20,20,20,0.0)');
-      g1.addColorStop(0.55, 'rgba(10,10,10,0.55)');
-      g1.addColorStop(1, 'rgba(0,0,0,0.85)');
-      ctx.fillStyle = g1; ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      for (var q = 0; q < e1.length; q++) q ? ctx.lineTo(e1[q].x, e1[q].y) : ctx.moveTo(e1[q].x, e1[q].y);
-      ctx.stroke();
-    }
-    if (o.edge !== false) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.32)'; ctx.lineWidth = 1.1;
-      path(ctx, h); ctx.stroke();
-    }
-    ctx.restore();
-    return { e0: e0, e1: e1, bbox: bb, hull: h };
-  }
-
-  /* 电极" collar "：短圆柱环（-X 端有环形端面朝 +X），原视频里的彩色法兰
-     画序：环体(-X 侧) → 环形端面(x) → 由调用方随后画筒身遮住内圈 */
-  function collarX(ctx, cam, x, len, rOut, rIn, mat, o) {
-    o = o || {};
-    var N = o.seg || 44;
-    var eA = ellipsePts(cam, x - len, rOut, N);
-    var eB = ellipsePts(cam, x, rOut, N);
-    ctx.save();
-    // 环体外表面
-    var hb = hull(eA.concat(eB));
-    path(ctx, hb);
-    var bbA = bboxOf(hb);
-    var i;
-    ctx.fillStyle = vGrad(ctx, bbA.y0, bbA.y1, mat, 0.30); ctx.fill();
-    if (o.mesh !== false) {
-      ctx.save(); ctx.clip();
-      ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1; ctx.beginPath();
-      for (var k = Math.floor(bbA.x0); k < bbA.x1; k += 3) { ctx.moveTo(k, bbA.y0); ctx.lineTo(k, bbA.y1); }
-      ctx.stroke(); ctx.restore();
-    }
-    // 环形端面（外椭圆 - 内椭圆，evenodd）
-    var eo = eB, ei = ellipsePts(cam, x, rIn, N);
-    ctx.beginPath();
-    for (i = 0; i < eo.length; i++) i ? ctx.lineTo(eo[i].x, eo[i].y) : ctx.moveTo(eo[i].x, eo[i].y);
-    ctx.closePath();
-    for (i = ei.length - 1; i >= 0; i--) ctx.lineTo(ei[i].x, ei[i].y);
-    ctx.closePath();
-    var bb = bboxOf(eo);
-    var g = ctx.createLinearGradient(0, bb.y0, 0, bb.y1);
-    g.addColorStop(0, mat.lo); g.addColorStop(0.24, mat.hi);
-    g.addColorStop(0.56, mat.mid); g.addColorStop(1, mat.lo);
-    ctx.fillStyle = g; ctx.fill('evenodd');
-    if (o.mesh !== false) {
-      ctx.save(); ctx.clip('evenodd');
-      ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1; ctx.beginPath();
-      for (var k2 = Math.floor(bb.x0); k2 < bb.x1; k2 += 3) { ctx.moveTo(k2, bb.y0); ctx.lineTo(k2, bb.y1); }
-      ctx.stroke(); ctx.restore();
-    }
-    ctx.strokeStyle = 'rgba(255,255,255,0.40)'; ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    for (i = 0; i < eo.length; i++) i ? ctx.lineTo(eo[i].x, eo[i].y) : ctx.moveTo(eo[i].x, eo[i].y);
-    ctx.closePath(); ctx.stroke();
-    ctx.restore();
-    return bb;
-  }
-
-  /* 面向 +X 的圆环（annulus，电极法兰环） */
-  function ringX(ctx, cam, x, rOut, rIn, mat, o) {
-    o = o || {};
-    var N = o.seg || 48;
-    var eo = ellipsePts(cam, x, rOut, N), ei = ellipsePts(cam, x, rIn, N);
-    ctx.save();
-    ctx.beginPath();
-    for (var i = 0; i < eo.length; i++) i ? ctx.lineTo(eo[i].x, eo[i].y) : ctx.moveTo(eo[i].x, eo[i].y);
-    ctx.closePath();
-    for (var j = ei.length - 1; j >= 0; j--) ctx.lineTo(ei[j].x, ei[j].y);
-    ctx.closePath();
-    var bb = bboxOf(eo);
-    var g = ctx.createLinearGradient(0, bb.y0, 0, bb.y1);
-    g.addColorStop(0, mat.lo); g.addColorStop(0.22, mat.hi);
-    g.addColorStop(0.52, mat.mid); g.addColorStop(1, mat.lo);
-    ctx.fillStyle = g; ctx.fill('evenodd');
-    // 环面肋纹（径向短线的观感：沿外椭圆画竖线）
-    if (o.mesh !== false) {
-      ctx.save(); ctx.clip('evenodd');
-      ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 1; ctx.beginPath();
-      for (var k = Math.floor(bb.x0); k < bb.x1; k += 3) { ctx.moveTo(k, bb.y0); ctx.lineTo(k, bb.y1); }
-      ctx.stroke(); ctx.restore();
-    }
-    ctx.strokeStyle = 'rgba(255,255,255,0.42)'; ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    for (var m = 0; m < eo.length; m++) m ? ctx.lineTo(eo[m].x, eo[m].y) : ctx.moveTo(eo[m].x, eo[m].y);
-    ctx.stroke();
-    ctx.restore();
-    return bb;
-  }
-
-  /* 面向 +X 的实心圆盘 */
-  function discX(ctx, cam, x, r, mat, o) {
-    o = o || {};
-    var e = ellipsePts(cam, x, r, o.seg || 48);
-    var bb = bboxOf(e);
-    ctx.save();
-    path(ctx, e);
-    var g = ctx.createLinearGradient(0, bb.y0, 0, bb.y1);
-    g.addColorStop(0, mat.lo); g.addColorStop(0.30, mat.hi);
-    g.addColorStop(0.62, mat.mid); g.addColorStop(1, mat.lo);
-    ctx.fillStyle = g; ctx.fill();
-    if (o.mesh) {
-      ctx.save(); ctx.clip();
-      ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 1; ctx.beginPath();
-      for (var k = Math.floor(bb.x0); k < bb.x1; k += 4) { ctx.moveTo(k, bb.y0); ctx.lineTo(k, bb.y1); }
-      ctx.stroke();
-      ctx.strokeStyle = 'rgba(255,255,255,0.11)'; ctx.beginPath();
-      for (var m = Math.floor(bb.y0); m < bb.y1; m += 6) { ctx.moveTo(bb.x0, m); ctx.lineTo(bb.x1, m); }
-      ctx.stroke(); ctx.restore();
-    }
-    ctx.strokeStyle = 'rgba(255,255,255,0.36)'; ctx.lineWidth = 1.2; ctx.stroke();
-    if (o.rim) {   // 最前面的端盘：内圈出射口
-      var e2 = ellipsePts(cam, x, r * 0.42, o.seg || 48);
-      var bb2 = bboxOf(e2);
-      path(ctx, e2);
-      var g2 = ctx.createLinearGradient(0, bb2.y0, 0, bb2.y1);
-      g2.addColorStop(0, '#2A2A2A'); g2.addColorStop(0.5, '#141414'); g2.addColorStop(1, '#2A2A2A');
-      ctx.fillStyle = g2; ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.30)'; ctx.lineWidth = 1; ctx.stroke();
-    }
-    ctx.restore();
-    return bb;
-  }
-
-  /* 注入端：同轴圆盘堆叠（从远到近，逐个变大） */
-  function discStackX(ctx, cam, xf, radii, mat, o) {
-    o = o || {};
-    var step = o.step == null ? 0.30 : o.step;
-    for (var i = 0; i < radii.length; i++) {
-      var xx = xf - (radii.length - 1 - i) * step;
-      var last = (i === radii.length - 1);
-      discX(ctx, cam, xx, radii[i], last ? (o.capMat || MAT.dark) : mat,
-        { mesh: true, seg: 52, rim: last });
-    }
-  }
-
-  /* 通用 3D 长方体（用于直流电源模块等）：中心 c，半尺寸 h */
-  function block3D(ctx, cam, c, h, mat, o) {
-    o = o || {};
-    var v = [];
-    for (var i = 0; i < 8; i++) {
-      v.push(cam.proj([c[0] + (i & 1 ? h[0] : -h[0]), c[1] + (i & 2 ? h[1] : -h[1]), c[2] + (i & 4 ? h[2] : -h[2])]));
-    }
-    var face = function (a, b, cc, d, shade) {
-      ctx.beginPath();
-      ctx.moveTo(v[a].x, v[a].y); ctx.lineTo(v[b].x, v[b].y);
-      ctx.lineTo(v[cc].x, v[cc].y); ctx.lineTo(v[d].x, v[d].y); ctx.closePath();
-      ctx.fillStyle = shade; ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1; ctx.stroke();
-    };
-    // 索引：bit0=x+ bit1=y+ bit2=z+
-    face(4, 5, 7, 6, mat.mid);        // +Z 前面
-    face(1, 5, 7, 3, mat.lo);         // +X 右侧
-    face(2, 3, 7, 6, mat.hi);         // +Y 顶面
-    return v;
-  }
-
-  /* 平行板（垂直于 X 轴的两块板，带孔洞与电荷符号）
-     x: 板位置；side: -1 左板 / +1 右板；sign: '+' / '−' */
-  function plate3D(ctx, cam, x, hw, hh, thick, mat, o) {
-    o = o || {};
-    // 顶点：bit0 = x+, bit1 = y+, bit2 = z+
-    var P3 = [];
-    for (var i = 0; i < 8; i++) {
-      P3.push(cam.proj([x + (i & 1 ? thick : -thick),
-                        (i & 2 ? hh : -hh),
-                        (i & 4 ? hw : -hw)]));
-    }
-    var quad = function (a, b, c, d, fill, stroke) {
-      ctx.beginPath();
-      ctx.moveTo(P3[a].x, P3[a].y); ctx.lineTo(P3[b].x, P3[b].y);
-      ctx.lineTo(P3[c].x, P3[c].y); ctx.lineTo(P3[d].x, P3[d].y);
-      ctx.closePath();
-      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
-      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1.2; ctx.stroke(); }
-    };
-    ctx.save();
-    // +Z 侧面（朝向观察者的一侧边）
-    quad(4, 5, 7, 6, mat.lo, 'rgba(255,255,255,0.18)');
-    // +Y 顶面
-    quad(2, 3, 7, 6, mat.hi, 'rgba(255,255,255,0.20)');
-    // +X 面 = 朝向另一块极板/观察者的大面
-    var bb = bboxOf([P3[1], P3[3], P3[7], P3[5]]);
-    var g = ctx.createLinearGradient(0, bb.y0, 0, bb.y1);
-    g.addColorStop(0, mat.hi); g.addColorStop(0.45, mat.mid); g.addColorStop(1, mat.lo);
-    quad(1, 3, 7, 5, g, 'rgba(255,255,255,0.34)');
-    // 电荷符号阵列（画在 +X 面上）
-    if (o.sign) {
-      var cols = o.cols || 3, rows = o.rows || 4;
-      ctx.fillStyle = o.signColor || C.white;
-      ctx.font = '700 ' + (o.signSize || 17) + 'px ' + FONT;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      for (var ci = 0; ci < cols; ci++) {
-        for (var ri = 0; ri < rows; ri++) {
-          var zz = -hw * 0.72 + (ci + 0.5) / cols * hw * 1.44;
-          var yy = -hh * 0.70 + (ri + 0.5) / rows * hh * 1.40;
-          var pp = cam.proj([x + thick * 1.02, yy, zz]);
-          ctx.fillText(o.sign, pp.x, pp.y);
-        }
-      }
-    }
-    // 中央过孔（束流通道）
-    if (o.bore !== false) {
-      var bc = cam.proj([x + thick * 1.03, 0, 0]);
-      var be = cam.proj([x + thick * 1.03, hh * 0.13, 0]);
-      var rad = Math.abs(bc.y - be.y);
-      ctx.beginPath(); ctx.ellipse(bc.x, bc.y, rad * 0.72, rad, 0, 0, Math.PI * 2);
-      ctx.fillStyle = '#080808'; ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.30)'; ctx.lineWidth = 1; ctx.stroke();
-    }
-    ctx.restore();
-    return { face: [P3[1], P3[3], P3[7], P3[5]], bbox: bb };
-  }
-
-  /* ============ 4. 电路与场 ============ */
-  function wire(ctx, cam, pts, color, o) {
-    o = o || {};
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = o.w == null ? 1.6 : o.w;
-    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    if (o.glow) { ctx.shadowColor = color; ctx.shadowBlur = 8; }
-    ctx.beginPath();
-    for (var i = 0; i < pts.length; i++) {
-      var p = cam.proj(pts[i]);
-      i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
-    }
-    ctx.stroke();
-    if (o.dots) {
-      ctx.shadowBlur = 0; ctx.fillStyle = color;
-      [pts[0], pts[pts.length - 1]].forEach(function (q) {
-        var p = cam.proj(q);
-        ctx.beginPath(); ctx.arc(p.x, p.y, o.dotR || 3, 0, Math.PI * 2); ctx.fill();
-      });
-    }
-    ctx.restore();
-  }
-
-  /* ~AC 交流电源符号（白色，正弦曲线 + AC 字样） */
-  function acSource(ctx, cam, pos, size, o) {
-    o = o || {};
-    var p = cam.proj(pos);
-    var s = size || 30;
-    ctx.save();
-    ctx.strokeStyle = o.color || C.white;
-    ctx.lineWidth = Math.max(1.7, s * 0.085);
-    ctx.lineCap = 'round';
-    var x0 = p.x - s * 1.55, wv = s * 1.30, amp = s * 0.30;
-    ctx.beginPath();
-    for (var i = 0; i <= 28; i++) {
-      var t = i / 28;
-      var x = x0 + t * wv;
-      var y = p.y - Math.sin(t * Math.PI * 2) * amp;
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    }
-    ctx.stroke();
-    ctx.fillStyle = o.color || C.white;
-    ctx.font = '400 ' + (s * 1.05).toFixed(1) + 'px ' + FONT;
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText('AC', x0 + wv + s * 0.28, p.y);
-    ctx.restore();
-    return p;
-  }
-
-  /* 场箭头（白色 → / 红色 ←），用于缝隙里的 E */
-  function fieldArrow(ctx, a, b, color, w) {
-    var dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1;
-    var ux = dx / L, uy = dy / L, hd = Math.min(9, L * 0.5);
-    ctx.save();
-    ctx.strokeStyle = color; ctx.fillStyle = color;
-    ctx.lineWidth = w == null ? 1.8 : w; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x - ux * hd * 0.8, b.y - uy * hd * 0.8); ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(b.x, b.y);
-    ctx.lineTo(b.x - ux * hd - uy * hd * 0.42, b.y - uy * hd + ux * hd * 0.42);
-    ctx.lineTo(b.x - ux * hd + uy * hd * 0.42, b.y - uy * hd - ux * hd * 0.42);
-    ctx.closePath(); ctx.fill();
-    ctx.restore();
-  }
-
-  /* 发光粒子 */
-  function glowDot(ctx, x, y, r, color, o) {
-    o = o || {};
-    var gr = ctx.createRadialGradient(x, y, 0, x, y, r * (o.halo || 3.6));
-    gr.addColorStop(0, color);
-    gr.addColorStop(0.30, color);
-    gr.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.save();
-    ctx.globalAlpha = o.haloAlpha == null ? 0.55 : o.haloAlpha;
-    ctx.fillStyle = gr;
-    ctx.beginPath(); ctx.arc(x, y, r * (o.halo || 3.6), 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = o.core || C.white;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  }
-
-  /* 电子束：一串小点 + 末端亮点（电子枪出射） */
-  function electronBeam(ctx, cam, a, b, n, o) {
-    o = o || {};
-    var pa = cam.proj(a), pb = cam.proj(b);
-    ctx.save();
-    ctx.fillStyle = o.color || C.cyan;
-    ctx.shadowColor = o.color || C.cyan; ctx.shadowBlur = 6;
-    for (var i = 0; i < n; i++) {
-      var t = (i + 1) / (n + 1);
-      var x = pa.x + (pb.x - pa.x) * t, y = pa.y + (pb.y - pa.y) * t;
-      ctx.beginPath(); ctx.arc(x, y, o.r || 3.4, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.restore();
-    glowDot(ctx, pb.x, pb.y, (o.r || 3.4) * 1.5, C.white, { halo: 3.0, haloAlpha: 0.42 });
-  }
-
-  /* 场锥（平行板之间的匀强场，青色半透明梯形） */
-  function beamCone(ctx, cam, quad, o) {
-    o = o || {};
-    var p = quad.map(function (q) { return cam.proj(q); });
-    ctx.save();
-    path(ctx, p);
-    var bb = bboxOf(p);
-    var g = ctx.createLinearGradient(bb.x0, 0, bb.x1, 0);
-    g.addColorStop(0, 'rgba(5,232,253,0.05)');
-    g.addColorStop(1, 'rgba(5,232,253,' + (o.alpha == null ? 0.20 : o.alpha) + ')');
-    ctx.fillStyle = g; ctx.fill();
-    if (o.edge !== false) {
-      ctx.strokeStyle = 'rgba(5,232,253,0.45)'; ctx.lineWidth = 1; ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  /* 场线（平行板之间的水平虚线箭头阵列） */
-  function fieldLinesX(ctx, cam, x0, x1, ys, zs, o) {
-    o = o || {};
-    for (var i = 0; i < ys.length; i++) {
-      for (var j = 0; j < zs.length; j++) {
-        var a = cam.proj([x0, ys[i], zs[j]]);
-        var b = cam.proj([x1, ys[i], zs[j]]);
-        ctx.save();
-        ctx.setLineDash([6, 5]);
-        ctx.strokeStyle = o.color || 'rgba(255,255,255,0.55)';
-        ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-        ctx.restore();
-      }
-    }
-  }
-
-  /* ============ 5. 版面（每一帧都长这样） ============ */
-  function watermark(ctx, W, H, text) {
-    text = text || '电源和电流';
-    ctx.save();
-    ctx.globalAlpha = 0.010;   // 量自参考帧空白区：水印峰值照度 ≈0.008
-    ctx.fillStyle = '#FFFFFF';
-    var fs2 = Math.round(H * 0.115);
-    ctx.font = '400 ' + fs2 + 'px ' + FONT;
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    var unit = text + '   ';
-    var stepX = ctx.measureText(unit).width;
-    ctx.translate(W * 0.5, H * 0.5);
-    ctx.rotate(-Math.PI / 180 * 24);
-    ctx.translate(-W * 1.15, -H * 1.15);
-    var rows = Math.ceil(H * 2.4 / (fs2 * 1.55));
-    var cols = Math.ceil(W * 2.4 / stepX) + 1;
-    for (var r = 0; r < rows; r++) {
-      for (var c = 0; c < cols; c++) {
-        ctx.fillText(text, c * stepX + (r % 2) * stepX * 0.5, r * fs2 * 1.55);
-      }
-    }
-    ctx.restore();
-  }
-  /* 品牌角标：本课已移除（不使用任何第三方标识与内嵌图片素材） */
-  function brand() { /* no-op */ }
-  /* 底部字幕：无衬线，参考帧实测 274px/8 字 → 字号 34，基线 y≈680，水平中心 x≈639 */
-  function caption(ctx, W, H, text, o) {
-    if (!text) return;
-    o = o || {};
-    var k = W / 1280;
-    ctx.save();
-    ctx.font = (o.weight || 400) + ' ' + Math.round((o.size || 34) * k) + 'px ' + FONT;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = o.color || C.cap;
-    ctx.fillText(text, W * (o.cx == null ? 0.4992 : o.cx),
-                     H - (o.bottom == null ? 40 * k : o.bottom * k));
-    ctx.restore();
-  }
-  /* 左侧要点面板：① ② ③ 或 ▶ 起头 */
-  function bullets(ctx, x, y, items, o) {
-    o = o || {};
-    var fs2 = o.size || 20, lh = fs2 * 1.85;
-    ctx.save();
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    for (var i = 0; i < items.length; i++) {
-      var it = items[i], mark = it.mark || (o.marker === 'num' ? '①②③④⑤⑥'[i] : '▶');
-      var tx = x;
-      ctx.font = '400 ' + fs2 + 'px ' + FONT;
-      ctx.fillStyle = o.markColor || C.white;
-      ctx.fillText(mark, x, y + i * lh);
-      tx = x + ctx.measureText(mark).width + fs2 * 0.5;
-      ctx.fillStyle = it.color || o.color || C.white;
-      ctx.font = (it.bold ? '600 ' : '400 ') + fs2 + 'px ' + FONT;
-      ctx.fillText(it.text, tx, y + i * lh);
-      if (it.sub) {
-        ctx.fillStyle = C.grey; ctx.font = '400 ' + (fs2 * 0.92) + 'px ' + FONT;
-        ctx.fillText(it.sub, tx, y + i * lh + lh * 0.62);
-      }
-    }
-    ctx.restore();
-  }
-  /* 标题块：英文**衬线体**在上、中文无衬线在下，整体可轻微顺时针倾斜
-     （量自参考帧：EN 串宽 327px / cap 高 28px；整块顺时针 ≈5.2°，与画面 3D 透视同向）
-     锚点：(ax, ay) 是**英文基线的左端点**，绕它旋转 rot 度。 */
-  function titleBlock(ctx, ax, ay, en, cn, o) {
-    o = o || {};
-    var k = ctx.canvas.width / 1280;
-    ctx.save();
-    ctx.translate(ax, ay);
-    ctx.rotate((o.rot == null ? 5.2 : o.rot) * Math.PI / 180);
-    ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
-    if (en) {
-      var sEn = (o.enSize || 40) * k;
-      ctx.font = '400 ' + sEn + 'px ' + SERIF;
-      var wEn = ctx.measureText(en).width;
-      var target = (o.enWidth || 327) * k;                 // 串宽按参考帧锁定
-      ctx.save();
-      ctx.scale(target / wEn, 1);                          // 横向压缩到目标串宽
-      ctx.fillStyle = o.enColor || C.white;
-      ctx.fillText(en, 0, 0);
-      ctx.restore();
-    }
-    if (cn) {
-      var sCn = (o.cnSize || 39) * k;
-      ctx.font = '400 ' + sCn + 'px ' + FONT;
-      ctx.fillStyle = o.cnColor || C.white;
-      ctx.fillText(cn, (o.cnDx == null ? 62 : o.cnDx) * k, (o.cnDy == null ? 57 : o.cnDy) * k);
-    }
-    ctx.restore();
-  }
-  /* 图例：实心圆点 + 中文；参考帧实测 点径 14、字号 25、两点中心距 103px、行中心 y=546 */
-  function legend(ctx, cx, y, items, o) {
-    o = o || {};
-    var k = ctx.canvas.width / 1280;
-    var fs2 = (o.size || 25) * k, gap = (o.gap || 103) * k;
-    ctx.save();
-    ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    var x = cx - gap * (items.length - 1) / 2;
-    for (var i = 0; i < items.length; i++) {
-      ctx.beginPath();
-      ctx.arc(x + i * gap, y, (o.r || 7) * k, 0, Math.PI * 2);
-      ctx.fillStyle = items[i].color; ctx.fill();
-      ctx.fillStyle = C.white; ctx.font = '400 ' + fs2 + 'px ' + FONT;
-      ctx.fillText(items[i].text, x + i * gap + fs2 * 0.48, y);
-    }
-    ctx.restore();
-  }
-  /* ============ 6. 小图（v-t 阶梯 / U-t 方波） ============ */
-  function insetFrame(ctx, x, y, w, h) {
-    ctx.save();
-    ctx.strokeStyle = C.white; ctx.lineWidth = 2;
-    ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(x, y, w, h, 12); else ctx.rect(x, y, w, h);
-    ctx.stroke();
-    ctx.restore();
-  }
-  function insetAxes(ctx, x, y, w, h, o) {
-    o = o || {};
-    var pad = o.pad || 34;
-    var x0 = x + pad, y0 = y + h - pad, x1 = x + w - pad * 0.8, y1 = y + pad * 0.8;
-    ctx.save();
-    ctx.strokeStyle = C.white; ctx.fillStyle = C.white; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x1, y0); ctx.lineTo(x1 - 9, y0 - 4.5); ctx.lineTo(x1 - 9, y0 + 4.5); ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(x0, y1); ctx.lineTo(x0 - 4.5, y1 + 9); ctx.lineTo(x0 + 4.5, y1 + 9); ctx.closePath(); ctx.fill();
-    ctx.font = 'italic 400 17px ' + MATH;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(o.xlab || 't', x1 + 14, y0);
-    ctx.fillText(o.ylab || 'v', x0, y1 - 14);
-    ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-    ctx.fillText('O', x0 - 6, y0 + 4);
-    ctx.restore();
-    return { x0: x0, y0: y0, x1: x1, y1: y1 };
-  }
-  /* v-t 阶梯图：n 级阶梯，末级用虚线投影 */
-  function insetVT(ctx, x, y, w, h, levels, o) {
-    o = o || {};
-    insetFrame(ctx, x, y, w, h);
-    var A = insetAxes(ctx, x, y, w, h, { xlab: 't', ylab: 'v' });
-    var n = Math.max(1, levels);
-    var bw = (A.x1 - A.x0) / (n + 1.6);
-    ctx.save();
-    ctx.strokeStyle = C.pos; ctx.lineWidth = 2.6; ctx.lineJoin = 'miter';
-    ctx.beginPath();
-    var px = A.x0, py = A.y0;
-    ctx.moveTo(px, py);
-    var stepH = (A.y0 - A.y1) / (n + 0.7);
-    for (var i = 1; i <= n; i++) {
-      px += bw; ctx.lineTo(px, py);
-      py -= stepH; ctx.lineTo(px, py);
-    }
-    px += bw * 0.7; ctx.lineTo(px, py);
-    ctx.stroke();
-    // 末级虚线投影
-    ctx.setLineDash([5, 4]); ctx.lineWidth = 1.2;
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, A.y0); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(A.x0, py); ctx.lineTo(px, py); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = C.white; ctx.font = 'italic 400 15px ' + MATH;
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText('v' + (o.sub || ''), A.x0 - 30, py);
-    ctx.restore();
-    return A;
-  }
-  /* U-t 方波图：实线 + 虚线续期 */
-  function insetUT(ctx, x, y, w, h, periods, o) {
-    o = o || {};
-    insetFrame(ctx, x, y, w, h);
-    var A = insetAxes(ctx, x, y, w, h, { xlab: 't', ylab: 'U' });
-    var mid = (A.y0 + A.y1) / 2 + 6;
-    var amp = (A.y0 - A.y1) / 2 - 12;
-    var per = (A.x1 - A.x0) / (periods + 0.5);
-    ctx.save();
-    ctx.lineWidth = 2.4; ctx.lineJoin = 'miter';
-    for (var i = 0; i < periods; i++) {
-      var xa = A.x0 + i * per;
-      ctx.strokeStyle = i % 2 === 0 ? C.neg : C.neg;
-      ctx.setLineDash(o.dashedFrom != null && i >= o.dashedFrom ? [6, 5] : []);
-      ctx.beginPath();
-      ctx.moveTo(xa, mid - amp); ctx.lineTo(xa + per * 0.5, mid - amp);
-      ctx.lineTo(xa + per * 0.5, mid + amp); ctx.lineTo(xa + per, mid + amp);
-      ctx.stroke();
-    }
-    ctx.setLineDash([]);
-    ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1.1;
-    ctx.beginPath(); ctx.moveTo(A.x0, mid); ctx.lineTo(A.x1, mid); ctx.stroke();
-    ctx.fillStyle = C.white; ctx.font = 'italic 400 15px ' + MATH;
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    ctx.fillText('u', A.x0 - 8, mid - amp);
-    ctx.fillText('−u', A.x0 - 8, mid + amp);
-    ctx.textAlign = 'center';
-    ctx.fillText('T', A.x0 + per * 0.5, mid + amp + 16);
-    ctx.fillText('2T', A.x0 + per * 1.5, mid + amp + 16);
-    ctx.restore();
-    return A;
-  }
-
-  /* ============ 7. 文字 ============ */
-  function sans(ctx, text, x, y, o) {
-    o = o || {};
-    ctx.save();
-    ctx.font = (o.weight || 400) + ' ' + (o.size || 20) + 'px ' + FONT;
-    ctx.fillStyle = o.color || C.white;
-    ctx.textAlign = o.align || 'left';
-    ctx.textBaseline = o.baseline || 'middle';
-    if (o.glow) { ctx.shadowColor = o.color || C.white; ctx.shadowBlur = 8; }
-    ctx.fillText(text, x, y);
-    ctx.restore();
-  }
-  function math(ctx, text, x, y, o) {
-    o = o || {};
-    ctx.save();
-    ctx.font = 'italic ' + (o.weight || 400) + ' ' + (o.size || 24) + 'px ' + MATH;
-    ctx.fillStyle = o.color || C.white;
-    ctx.textAlign = o.align || 'left';
-    ctx.textBaseline = o.baseline || 'middle';
-    ctx.fillText(text, x, y);
-    ctx.restore();
-  }
-  function measure(ctx, text, font) {
-    ctx.save(); ctx.font = font; var w = ctx.measureText(text).width; ctx.restore(); return w;
-  }
-
-  /* ============ 7b. 电磁学 2D 图元（视频2/3 的静电与电路画面） ============ */
-
-  /* 方格纸底纹（视频2/3 常见的淡青方格） */
-  function graphPaper(ctx, W, H, o) {
-    o = o || {};
-    var step = o.step || 46;
-    ctx.save();
-    ctx.strokeStyle = o.color || 'rgba(14,138,150,0.16)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (var x = (o.x0 || 0); x < W; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
-    for (var y = (o.y0 || 0); y < H; y += step) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  /* 电荷小球：正电荷（青底白 +）/ 自由电子（白底深 −） */
-  function chargeDot(ctx, x, y, r, kind, o) {
-    o = o || {};
-    var fill = kind === 'pos' ? (o.posColor || C.neg) : (o.negColor || '#E8E8E8');
-    var mark = kind === 'pos' ? '+' : '−';
-    var markColor = kind === 'pos' ? '#FFFFFF' : '#101010';
-    ctx.save();
-    if (o.glow) { ctx.shadowColor = fill; ctx.shadowBlur = 8; }
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fillStyle = fill; ctx.fill();
-    ctx.shadowBlur = 0;
-    if (o.ring !== false) {
-      ctx.strokeStyle = kind === 'pos' ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.35)';
-      ctx.lineWidth = 1; ctx.stroke();
-    }
-    if (r >= 3.2) {
-      ctx.fillStyle = markColor;
-      ctx.font = '700 ' + (r * 1.55).toFixed(1) + 'px ' + FONT;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(mark, x, y + r * 0.06);
-    }
-    ctx.restore();
-  }
-
-  /* 电场线：从 (x0,y0) 到 (x1,y1)，可给弯曲控制点，沿线画箭头 */
-  function eFieldLine(ctx, pts, o) {
-    o = o || {};
-    ctx.save();
-    ctx.strokeStyle = o.color || 'rgba(255,255,255,0.85)';
-    ctx.lineWidth = o.w == null ? 1.3 : o.w;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    for (var i = 0; i < pts.length; i++) i ? ctx.lineTo(pts[i].x, pts[i].y) : ctx.moveTo(pts[i].x, pts[i].y);
-    ctx.stroke();
-    var n = o.arrows == null ? 2 : o.arrows;
-    for (var k = 1; k <= n; k++) {
-      var t = k / (n + 1);
-      var p = polyAt(pts, t), q = polyAt(pts, Math.min(1, t + 0.02));
-      var dx = q.x - p.x, dy = q.y - p.y, L = Math.hypot(dx, dy) || 1;
-      var ux = dx / L, uy = dy / L, hd = o.head || 7;
-      ctx.fillStyle = o.color || 'rgba(255,255,255,0.85)';
-      ctx.beginPath();
-      ctx.moveTo(p.x + ux * hd * 0.5, p.y + uy * hd * 0.5);
-      ctx.lineTo(p.x - ux * hd * 0.5 - uy * hd * 0.40, p.y - uy * hd * 0.5 + ux * hd * 0.40);
-      ctx.lineTo(p.x - ux * hd * 0.5 + uy * hd * 0.40, p.y - uy * hd * 0.5 - ux * hd * 0.40);
-      ctx.closePath(); ctx.fill();
-    }
-    ctx.restore();
-  }
-  function polyAt(pts, t) {
-    // 折线按弧长取点
-    var seg = [], total = 0, i;
-    for (i = 1; i < pts.length; i++) {
-      var d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
-      seg.push(d); total += d;
-    }
-    var target = t * total, acc = 0;
-    for (i = 0; i < seg.length; i++) {
-      if (acc + seg[i] >= target) {
-        var f = seg[i] ? (target - acc) / seg[i] : 0;
-        return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * f, y: pts[i].y + (pts[i + 1].y - pts[i].y) * f };
-      }
-      acc += seg[i];
-    }
-    return pts[pts.length - 1];
-  }
-
-  /* 等势面：同心圆弧（视频2 的青色等势面） */
-  function equipotentialArc(ctx, cx, cy, r, a0, a1, o) {
-    o = o || {};
-    ctx.save();
-    ctx.strokeStyle = o.color || 'rgba(14,138,150,0.75)';
-    ctx.lineWidth = o.w == null ? 1.4 : o.w;
-    if (o.dash) ctx.setLineDash(o.dash);
-    ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1); ctx.stroke();
-    ctx.restore();
-  }
-
-  /* 金属导体矩形（白线框，可选带透视的等轴测方块） */
-  function metalBox(ctx, x, y, w, h, o) {
-    o = o || {};
-    ctx.save();
-    ctx.strokeStyle = o.color || C.white;
-    ctx.lineWidth = o.w == null ? 1.8 : o.w;
-    ctx.strokeRect(x, y, w, h);
-    if (o.label) {
-      ctx.fillStyle = o.labelColor || C.white;
-      ctx.font = '400 ' + (o.labelSize || 13) + 'px ' + FONT;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillText(o.label, x + w / 2, y + h + 8);
-    }
-    ctx.restore();
-  }
-
-  /* 空心球壳（视频2 的金属球 B）：圆环 + 内部空腔 */
-  function sphereShell(ctx, cx, cy, rOut, rIn, o) {
-    o = o || {};
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(cx, cy, rOut, 0, Math.PI * 2);
-    ctx.arc(cx, cy, rIn, 0, Math.PI * 2, true);
-    var g = ctx.createLinearGradient(cx - rOut, cy - rOut, cx + rOut, cy + rOut);
-    g.addColorStop(0, o.hi || '#D8D8D8'); g.addColorStop(0.5, o.mid || '#8A8A8A'); g.addColorStop(1, o.lo || '#3A3A3A');
-    ctx.fillStyle = o.flat || g; ctx.fill('evenodd');
-    ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(cx, cy, rOut, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx, cy, rIn, 0, Math.PI * 2); ctx.stroke();
-    ctx.restore();
-  }
-
-  /* 电路：折线导线（白）+ 结点 */
-  function circuit(ctx, pts, o) {
-    o = o || {};
-    ctx.save();
-    ctx.strokeStyle = o.color || C.white;
-    ctx.lineWidth = o.w == null ? 2 : o.w;
-    ctx.lineJoin = 'miter'; ctx.lineCap = 'butt';
-    ctx.beginPath();
-    for (var i = 0; i < pts.length; i++) i ? ctx.lineTo(pts[i][0], pts[i][1]) : ctx.moveTo(pts[i][0], pts[i][1]);
-    ctx.stroke();
-    if (o.nodes) o.nodes.forEach(function (n) {
-      ctx.beginPath(); ctx.arc(n[0], n[1], 3.2, 0, Math.PI * 2); ctx.fillStyle = o.color || C.white; ctx.fill();
-    });
-    ctx.restore();
-  }
-
-  /* 电容器符号（金色两平行板） */
-  function capSymbol(ctx, cx, cy, gap, hw, o) {
-    o = o || {};
-    ctx.save();
-    ctx.strokeStyle = o.color || C.gold;
-    ctx.lineWidth = o.w == null ? 4.5 : o.w;
-    ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(cx - gap / 2, cy - hw); ctx.lineTo(cx - gap / 2, cy + hw); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx + gap / 2, cy - hw); ctx.lineTo(cx + gap / 2, cy + hw); ctx.stroke();
-    ctx.restore();
-  }
-
-  /* 电源符号（金色长/短线） */
-  function batterySymbol(ctx, cx, cy, o) {
-    o = o || {};
-    ctx.save();
-    ctx.strokeStyle = o.color || C.gold;
-    ctx.lineWidth = o.w == null ? 4 : o.w;
-    ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(cx - 9, cy - 20); ctx.lineTo(cx - 9, cy + 20); ctx.stroke();
-    ctx.lineWidth = (o.w == null ? 4 : o.w) * 0.55;
-    ctx.beginPath(); ctx.moveTo(cx + 9, cy - 11); ctx.lineTo(cx + 9, cy + 11); ctx.stroke();
-    ctx.restore();
-  }
-
-  /* 静电计（金色圆盘 + 指针 + 外壳） */
-  function electrometer(ctx, cx, cy, r, o) {
-    o = o || {};
-    var ang = o.angle == null ? -0.55 : o.angle;
-    ctx.save();
-    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = o.bg || '#0A0A0A'; ctx.fill();
-    ctx.strokeStyle = o.color || C.gold; ctx.lineWidth = o.w == null ? 3.4 : o.w; ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(cx + Math.sin(ang) * r * 0.88, cy - Math.cos(ang) * r * 0.88);
-    ctx.strokeStyle = o.needle || C.white; ctx.lineWidth = 2.2; ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2); ctx.fillStyle = o.needle || C.white; ctx.fill();
-    if (o.label) {
-      ctx.fillStyle = C.white; ctx.font = '400 15px ' + FONT;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillText(o.label, cx, cy + r + 12);
-    }
-    ctx.restore();
-  }
-
-  /* 左上分区标题：中文大字 + 英文小字（视频2/3 的幕标题） */
-  function sectionTitle(ctx, x, y, cn, en, o) {
-    o = o || {};
-    ctx.save();
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = o.cnColor || C.white;
-    ctx.font = '700 ' + (o.cnSize || 26) + 'px ' + FONT;
-    ctx.fillText(cn, x, y);
-    if (en) {
-      ctx.fillStyle = o.enColor || C.grey;
-      ctx.font = '400 ' + (o.enSize || 14) + 'px ' + FONT;
-      ctx.fillText(en, x, y + (o.cnSize || 26) * 0.92);
-    }
-    ctx.restore();
-  }
-
-  /* ============ 8. 杂项 ============ */
-  function bboxOf(pts) {
-    var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
-    for (var i = 0; i < pts.length; i++) {
-      x0 = Math.min(x0, pts[i].x); y0 = Math.min(y0, pts[i].y);
-      x1 = Math.max(x1, pts[i].x); y1 = Math.max(y1, pts[i].y);
-    }
-    return { x0: x0, y0: y0, x1: x1, y1: y1, w: x1 - x0, h: y1 - y0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
-  }
-  function fitCanvas(cv, ctx) {
-    var dpr = Math.min(2, global.devicePixelRatio || 1);
-    var r = cv.getBoundingClientRect();
-    var W = Math.max(320, Math.round(r.width)), H = Math.max(200, Math.round(r.height));
-    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    return { W: W, H: H, dpr: dpr };
-  }
-
-  global.HEK = {
-    MAT: MAT, C: C, FONT: FONT, MATH: MATH,
-    makeCam: makeCam, vGrad: vGrad, lg: lg, bboxOf: bboxOf, fitCanvas: fitCanvas,
-    ellipsePts: ellipsePts, path: path, clip: clip,
-    cylX: cylX, ringX: ringX, collarX: collarX, discX: discX, discStackX: discStackX, block3D: block3D, plate3D: plate3D,
-    wire: wire, acSource: acSource, fieldArrow: fieldArrow, glowDot: glowDot,
-    electronBeam: electronBeam, beamCone: beamCone, fieldLinesX: fieldLinesX,
-    watermark: watermark, brand: brand, caption: caption, bullets: bullets,
-    titleBlock: titleBlock, legend: legend,
-    insetFrame: insetFrame, insetAxes: insetAxes, insetVT: insetVT, insetUT: insetUT,
-    sans: sans, math: math, measure: measure,
-    graphPaper: graphPaper, chargeDot: chargeDot, eFieldLine: eFieldLine, polyAt: polyAt,
-    equipotentialArc: equipotentialArc, metalBox: metalBox, sphereShell: sphereShell,
-    circuit: circuit, capSymbol: capSymbol, batterySymbol: batterySymbol, electrometer: electrometer,
-    sectionTitle: sectionTitle
+  /* 色卡（量取） */
+  var K = {
+    bg:      '#000000',
+    panel:   '#0A0A0A',
+    grid:    'rgba(255,255,255,0.035)',
+    wire:    '#FFFFFF',
+    pos:     '#FFFFFF',          // 正电荷点（白）
+    posDim:  '#C8C8C8',
+    neg:     '#2E9FD0',          // 负电荷 / 自由电子（青蓝）
+    negHi:   '#5FC4EE',
+    negLo:   '#1B6A93',
+    batHi:   '#4E92BC',          // 电池亮面
+    batMid:  '#3E7FA8',
+    batLo:   '#1B3A5C',          // 电池正极端（深蓝方块）
+    res:     '#4A87B0',          // 电阻体
+    plate:   '#8A8A8A',          // 电极板
+    plateLo: '#5A5A5A',
+    text:    '#FFFFFF',
+    dim:     '#B0B0B0',
+    edge:    'rgba(255,255,255,0.22)'
   };
-})(typeof window !== 'undefined' ? window : this);
-</script>
-<script>/* =====================================================================
-   viz_dc_render.js —— 11.1 电源和电流 · 渲染层（HE 视觉体系 · 电路语言）
-   画面语汇（与 9.4 / 10.6 同源）：
-     · 白色粗线 = 导线 / 导体边界        · 白色细线 + 箭头 = 电场 E
-     · 青底白「+」= 正极 / 正电荷        · 白底深「−」= 自由电子
-     · 橙色块 = 电源 / 装置 P            · 金色 = 结论量（q、I、容量）
-     · 左上分区标题 + ▶ 要点面板 + 底部字幕 + 右下读数块
-   ===================================================================== */
-(function (global) {
-  'use strict';
-  var K = global.HEK, P = global.DCPHYS;
-  var C = K.C, MAT = K.MAT;
 
-  function sc(H) { return Math.max(0.52, Math.min(1.5, H / 720)); }
+  function sc(H) { return Math.max(0.5, Math.min(1.45, H / 720)); }
 
-  /* ---------------- 通用零件 ---------------- */
-  function txt(ctx, s, x, y, o) {
+  /* ---------- 文字 ---------- */
+  function T(ctx, s, x, y, o) {
     o = o || {};
     ctx.save();
-    ctx.font = (o.w || 400) + ' ' + (o.size || 13) + 'px ' + K.FONT;
-    ctx.fillStyle = o.color || C.white;
+    ctx.font = (o.w || 400) + ' ' + (o.size || 20) + 'px ' + FONT;
+    ctx.fillStyle = o.color || K.text;
+    ctx.textAlign = o.align || 'left';
+    ctx.textBaseline = o.base || 'middle';
+    if (o.glow) { ctx.shadowColor = o.color || K.text; ctx.shadowBlur = 8; }
+    ctx.fillText(s, x, y);
+    ctx.restore();
+  }
+  /* 衬线斜体（公式，参考片的公式都是衬线斜体） */
+  function M(ctx, s, x, y, o) {
+    o = o || {};
+    ctx.save();
+    ctx.font = 'italic ' + (o.w || 400) + ' ' + (o.size || 26) + 'px ' + SERIF;
+    ctx.fillStyle = o.color || K.text;
     ctx.textAlign = o.align || 'left';
     ctx.textBaseline = o.base || 'middle';
     ctx.fillText(s, x, y);
     ctx.restore();
   }
-  function mtxt(ctx, s, x, y, o) {
+
+  /* ---------- 底纹：纯黑 + 细网格 ---------- */
+  function bgGrid(ctx, W, H, o) {
     o = o || {};
-    K.math(ctx, s, x, y, { size: o.size || 15, color: o.color || C.gold, align: o.align, baseline: o.base });
+    var step = o.step || 46;
+    ctx.save();
+    ctx.fillStyle = K.bg; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = K.grid; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (var x = o.x0 || 0; x < W; x += step) { ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); }
+    for (var y = o.y0 || 0; y < H; y += step) { ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5); }
+    ctx.stroke();
+    ctx.restore();
   }
-  function seg(ctx, x0, y0, x1, y1, o) {
+
+  /* ---------- 导线：白色直角折线（尖角），pts = [[x,y],…] ---------- */
+  function wirePath(ctx, pts, o) {
     o = o || {};
     ctx.save();
-    ctx.strokeStyle = o.color || C.white;
-    ctx.lineWidth = o.w == null ? 2 : o.w;
-    ctx.lineCap = 'round';
+    ctx.strokeStyle = o.color || K.wire;
+    ctx.lineWidth = o.w == null ? 3 : o.w;
+    ctx.lineJoin = 'miter'; ctx.lineCap = 'butt';
     if (o.dash) ctx.setLineDash(o.dash);
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    ctx.beginPath();
+    for (var i = 0; i < pts.length; i++) i ? ctx.lineTo(pts[i][0], pts[i][1]) : ctx.moveTo(pts[i][0], pts[i][1]);
+    ctx.stroke();
     ctx.restore();
   }
-  function arrow(ctx, x0, y0, x1, y1, color, w) {
-    K.fieldArrow(ctx, { x: x0, y: y0 }, { x: x1, y: y1 }, color || C.white, w);
-  }
-  /* 圆弧箭头（表示绕行方向） */
-  function arcArrow(ctx, cx, cy, r, a0, a1, color, w) {
-    ctx.save();
-    ctx.strokeStyle = color || C.white; ctx.lineWidth = w || 2;
-    ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1); ctx.stroke();
-    var tip = { x: cx + r * Math.cos(a1), y: cy + r * Math.sin(a1) };
-    var tang = a1 + Math.PI / 2;
-    K.fieldArrow(ctx, { x: tip.x - 10 * Math.cos(tang), y: tip.y - 10 * Math.sin(tang) }, tip, color || C.white, w || 2);
-    ctx.restore();
-  }
-  /* 读数块（右下，半透明黑底 + 白描边） */
-  function readoutBlock(ctx, x, y, w, rows, o) {
+
+  /* ---------- 电池：蓝灰渐变长块 + 深蓝正极端 + 接线柱 ----------
+     cx,cy 是中心；len 是总长；h 是高度；horiz=true 横放 */
+  function battery(ctx, cx, cy, len, h, o) {
     o = o || {};
-    var k = o.k || 1, lh = 20 * k, pad = 10 * k;
-    var h = rows.length * lh + pad * 2 - 4 * k;
+    var k = o.k || 1, horiz = o.horiz !== false;
+    var posW = h * 0.62;                     // 正极端（深蓝方块）宽度
+    var mainLen = len - posW;
     ctx.save();
-    ctx.fillStyle = 'rgba(10,10,10,0.72)';
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    ctx.translate(cx, cy);
+    if (!horiz) ctx.rotate(-Math.PI / 2);
+    /* 本体（主色渐变） */
+    var g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+    g.addColorStop(0, K.batHi); g.addColorStop(0.45, K.batMid); g.addColorStop(1, K.batLo);
+    ctx.fillStyle = g;
+    ctx.fillRect(-len / 2, -h / 2, mainLen, h);
+    /* 负极端短线 | */
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 2.4;
+    ctx.beginPath(); ctx.moveTo(-len / 2 + mainLen * 0.18, -h * 0.22);
+    ctx.lineTo(-len / 2 + mainLen * 0.18, h * 0.22); ctx.stroke();
+    /* 正极端深蓝方块 */
+    ctx.fillStyle = K.batLo;
+    ctx.fillRect(-len / 2 + mainLen, -h / 2, posW, h);
+    T(ctx, '+', -len / 2 + mainLen + posW / 2, 0, { size: h * 0.42, align: 'center', color: '#FFFFFF' });
+    /* 接线柱 */
+    ctx.fillStyle = '#7A7A7A';
+    ctx.fillRect(len / 2, -h * 0.16, h * 0.22, h * 0.32);
+    ctx.restore();
+  }
+
+  /* ---------- 电阻：蓝色扁块 + R 标签 ---------- */
+  function resistor(ctx, cx, cy, len, h, o) {
+    o = o || {};
+    ctx.save();
+    var g = ctx.createLinearGradient(0, cy - h / 2, 0, cy + h / 2);
+    g.addColorStop(0, K.negHi); g.addColorStop(0.5, K.res); g.addColorStop(1, K.negLo);
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - len / 2, cy - h / 2, len, h);
+    ctx.restore();
+    if (o.label !== false) M(ctx, 'R', cx, cy + h * 1.35, { size: (o.labelSize || 26), align: 'center' });
+  }
+
+  /* ---------- 电极板：灰色竖长条 ---------- */
+  function plate(ctx, cx, cy, w, h, o) {
+    o = o || {};
+    ctx.save();
+    var g = ctx.createLinearGradient(cx - w / 2, 0, cx + w / 2, 0);
+    g.addColorStop(0, K.plate); g.addColorStop(1, K.plateLo);
+    ctx.fillStyle = o.flat || g;
+    ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
+    ctx.restore();
+  }
+
+  /* ---------- 电荷点 ---------- */
+  function charge(ctx, x, y, r, kind, o) {
+    o = o || {};
+    ctx.save();
+    var col = kind === 'pos' ? (o.color || K.pos) : (o.color || K.neg);
+    if (o.glow !== false) { ctx.shadowColor = col; ctx.shadowBlur = 8; }
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  /* 沿折线排布电荷点：n 个，phase 循环平移（用于"流动"） */
+  function chargeFlow(ctx, pts, n, phase, o) {
+    o = o || {};
+    var total = 0, seg = [], i;
+    for (i = 1; i < pts.length; i++) {
+      var d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      seg.push(d); total += d;
+    }
+    for (i = 0; i < n; i++) {
+      var t = ((i / n) + (phase || 0)) % 1;
+      var p = at(pts, seg, total, t);
+      charge(ctx, p.x, p.y, o.r || 4.6, o.kind || 'neg', { glow: o.glow !== false });
+    }
+  }
+  function at(pts, seg, total, t) {
+    var target = t * total, acc = 0;
+    for (var i = 0; i < seg.length; i++) {
+      if (acc + seg[i] >= target || i === seg.length - 1) {
+        var f = seg[i] ? (target - acc) / seg[i] : 0;
+        return {
+          x: pts[i][0] + (pts[i + 1][0] - pts[i][0]) * f,
+          y: pts[i][1] + (pts[i + 1][1] - pts[i][1]) * f
+        };
+      }
+      acc += seg[i];
+    }
+    return { x: pts[0][0], y: pts[0][1] };
+  }
+  /* 沿直线等间距静止电荷（电极板上的分布） */
+  function chargeColumn(ctx, x, y0, y1, n, kind, o) {
+    for (var i = 0; i < n; i++) {
+      var y = y0 + (y1 - y0) * (i + 0.5) / n;
+      charge(ctx, x, y, (o && o.r) || 5, kind, o);
+    }
+  }
+
+  /* ---------- 右侧概念卡：[小标题] + 内容，衬线斜体公式 ----------
+     带宽度约束：超出 maxW 自动折行（避免写到屏幕外） */
+  function conceptCard(ctx, x, y, rows, o) {
+    o = o || {};
+    var k = o.k || 1;
+    var lh = (o.lh || 46) * k;
+    var maxW = o.maxW || (ctx.canvas.width / (o.dpr || 1) - x - 26 * k);
+    var fs = (o.size || 24) * k;
+    ctx.save();
+    var cy = y;
     for (var i = 0; i < rows.length; i++) {
-      var r = rows[i], yy = y + pad + i * lh + 4 * k;
-      txt(ctx, r[0], x + pad, yy, { size: 12.5 * k, color: C.grey });
-      txt(ctx, r[1], x + w - pad, yy, { size: 12.5 * k, color: r[2] || C.white, align: 'right', w: 600 });
+      var r = rows[i], xx = x + 78 * k;
+      if (r.label) {
+        T(ctx, '[' + r.label + ']', x, cy, { size: fs, color: o.labelColor || K.dim });
+        var lines = wrap(ctx, r.text || '', fs, maxW - 78 * k, '400 ' + fs + 'px ' + FONT);
+        for (var n = 0; n < lines.length; n++) {
+          T(ctx, lines[n], xx, cy + n * lh * 0.86, { size: fs, color: r.color || K.text });
+        }
+        cy += lh + (lines.length - 1) * lh * 0.86;
+      } else if (r.formula) {
+        M(ctx, r.formula, xx, cy, { size: (o.formulaSize || 34) * k, color: r.color || K.text });
+        cy += lh;
+      } else if (r.note) {
+        var ln2 = wrap(ctx, r.note, fs, maxW - 78 * k, '400 ' + fs + 'px ' + FONT);
+        for (var m = 0; m < ln2.length; m++) {
+          T(ctx, ln2[m], xx, cy + m * lh * 0.86, { size: fs, color: r.color || K.dim });
+        }
+        cy += lh + (ln2.length - 1) * lh * 0.86;
+      } else {
+        cy += lh;
+      }
     }
     ctx.restore();
   }
-  /* 一节电池（长线正极 / 短线负极），dir=1 表示正极在右 */
-  function cell(ctx, cx, cy, s, o) {
+  /* 按像素宽度折行（逐字测量，兼容中文） */
+  function wrap(ctx, text, fs, maxW, font) {
+    if (!text) return [''];
+    ctx.save();
+    ctx.font = font;
+    var out = [], line = '';
+    for (var i = 0; i < text.length; i++) {
+      var t = line + text[i];
+      if (ctx.measureText(t).width > maxW && line) { out.push(line); line = text[i]; }
+      else line = t;
+    }
+    if (line) out.push(line);
+    ctx.restore();
+    return out;
+  }
+
+  /* ---------- 左下常驻图例 ---------- */
+  function legend111(ctx, x, y, o) {
+    o = o || {};
+    var k = o.k || 1, r = 5.6 * k, gap = 210 * k, fs = 19 * k;
+    var items = o.items || [
+      { kind: 'pos', text: '正电荷' },
+      { kind: 'neg', text: '负电荷（自由电子）' }
+    ];
+    for (var i = 0; i < items.length; i++) {
+      var xx = x + i * gap;
+      charge(ctx, xx, y, r, items[i].kind, { glow: items[i].kind === 'neg' });
+      T(ctx, items[i].text, xx + r + 10 * k, y, { size: fs, color: K.text });
+    }
+  }
+
+  /* ---------- 底部字幕：中文主句（English）混排 ---------- */
+  function caption111(ctx, W, H, cn, en, o) {
     o = o || {};
     var k = o.k || 1;
-    K.batterySymbol(ctx, cx, cy, { color: o.color || C.orange, w: 3.2 * k * (s || 1), });
-    txt(ctx, o.label || '', cx, cy + 34 * k * (s || 1), { size: 12.5 * k, align: 'center', color: C.grey });
-  }
-  /* 小灯泡 */
-  function lamp(ctx, cx, cy, r, o) {
-    o = o || {};
+    var y = H - (o.bottom == null ? 54 : o.bottom) * k;
     ctx.save();
-    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = o.on ? 'rgba(240,172,95,0.22)' : 'rgba(0,0,0,0)';
-    ctx.fill();
-    ctx.strokeStyle = o.on ? C.gold : 'rgba(255,255,255,0.45)';
-    ctx.lineWidth = o.w == null ? 2 : o.w; ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx - r * 0.62, cy + r * 0.62); ctx.lineTo(cx + r * 0.62, cy - r * 0.62); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx - r * 0.62, cy - r * 0.62); ctx.lineTo(cx + r * 0.62, cy + r * 0.62); ctx.stroke();
-    if (o.on) {
-      var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 2.6);
-      g.addColorStop(0, 'rgba(240,172,95,0.30)'); g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.globalAlpha = 0.45; ctx.fillStyle = g;
-      ctx.beginPath(); ctx.arc(cx, cy, r * 2.6, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = 1;
+    ctx.textBaseline = 'middle';
+    var size = (o.size || 28) * k;
+    var cnW = 0;
+    ctx.font = '400 ' + size + 'px ' + FONT;
+    cnW = ctx.measureText(cn).width;
+    var enStr = en ? '（' + en + '）' : '';
+    ctx.font = '400 ' + (size * 0.82) + 'px ' + SERIF;
+    var enW = enStr ? ctx.measureText(enStr).width : 0;
+    var x0 = W * 0.5 - (cnW + enW) / 2;
+    ctx.font = '400 ' + size + 'px ' + FONT;
+    ctx.fillStyle = o.color || K.text;
+    ctx.textAlign = 'left';
+    ctx.fillText(cn, x0, y);
+    if (enStr) {
+      ctx.font = '400 ' + (size * 0.82) + 'px ' + SERIF;
+      ctx.fillStyle = o.enColor || K.dim;
+      ctx.fillText(enStr, x0 + cnW, y + 2 * k);
     }
     ctx.restore();
   }
-  /* 电流表（圆 + 指针 + A） */
-  function ammeter(ctx, cx, cy, r, frac, o) {
+
+  /* ---------- 左下/左上分区小标题（参考片无左上标题块，仅保留细字提示） ---------- */
+  function stepTitle(ctx, x, y, text, o) {
     o = o || {};
-    var k = o.k || 1;
-    ctx.save();
-    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = '#0A0A0A'; ctx.fill();
-    ctx.strokeStyle = C.gold; ctx.lineWidth = 2.4 * k; ctx.stroke();
-    var a0 = Math.PI * 1.15, a1 = Math.PI * 1.85;
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.2 * k;
-    ctx.beginPath(); ctx.arc(cx, cy, r * 0.74, a0, a1); ctx.stroke();
-    var a = a0 + (a1 - a0) * Math.max(0, Math.min(1, frac));
-    ctx.strokeStyle = C.white; ctx.lineWidth = 2 * k; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + r * 0.68 * Math.cos(a), cy + r * 0.68 * Math.sin(a)); ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx, cy, 2.4 * k, 0, Math.PI * 2); ctx.fillStyle = C.gold; ctx.fill();
-    txt(ctx, 'A', cx, cy + r * 0.42, { size: 13 * k, align: 'center', color: C.gold, w: 700 });
-    ctx.restore();
+    T(ctx, text, x, y, { size: (o.size || 20) * (o.k || 1), color: o.color || K.dim });
   }
-  /* 电子流：沿折线路径放 n 个电子点，phase 循环 */
-  function flow(ctx, pts, n, phase, o) {
+
+  global.KIT111 = {
+    FONT: FONT, SERIF: SERIF, K: K, sc: sc,
+    T: T, M: M, bgGrid: bgGrid, wirePath: wirePath, battery: battery, resistor: resistor,
+    plate: plate, charge: charge, chargeFlow: chargeFlow, chargeColumn: chargeColumn,
+    conceptCard: conceptCard, legend111: legend111, caption111: caption111, stepTitle: stepTitle,
+    polyAt111: at
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+<script>/* =====================================================================
+   viz_dc_render.js —— 11.1 电源和电流 · 渲染层
+   画面语汇复刻自参考片 BV1fnxdziE14（《拯救电学·电路及其应用》）：
+     · 纯黑底 + 细网格 · 直角折线导线 · 块体电池/电阻 · 灰色电极板
+     · 发光电荷点（白=正、青蓝=负/自由电子）· 左侧常驻图例
+     · 右侧概念卡（[形成]/[定义]/[公式]/[方向] + 衬线斜体）
+     · 底部混排字幕（中文（English））
+   内容仍按总控设计教案（环节①—⑦）编排；不使用任何第三方品牌素材。
+   ===================================================================== */
+(function (global) {
+  'use strict';
+  var Z = global.KIT111, P = global.DCPHYS;
+  var K = Z.K;
+
+  /* ---------- 版面：主图区 / 概念卡区 ---------- */
+  function layout(W, H, o) {
     o = o || {};
-    for (var i = 0; i < n; i++) {
-      var t = ((i / n) + phase) % 1;
-      var p = K.polyAt(pts, t);
-      K.chargeDot(ctx, p.x, p.y, o.r || 4.2, 'neg', { ring: false, glow: !!o.glow });
-    }
+    var card = o.card !== false;
+    var k = Z.sc(H);
+    return {
+      mx0: W * 0.055, mx1: card ? W * 0.615 : W * 0.945,   // 主图左右
+      my0: H * 0.14,  my1: H * 0.855,                       // 主图上下
+      cx: card ? W * 0.685 : W,                             // 概念卡左缘
+      cy: H * 0.24,
+      legendX: W * 0.075, legendY: H - 116 * k              // 图例：抬到底部字幕之上
+    };
   }
-  /* 正电荷流 */
-  function flowPos(ctx, pts, n, phase, o) {
+  function mx(L, u) { return L.mx0 + (L.mx1 - L.mx0) * u; }
+  function my(L, v) { return L.my0 + (L.my1 - L.my0) * v; }
+
+  /* ---------- 统一外壳 ---------- */
+  function shell(ctx, W, H, S, L, o) {
     o = o || {};
-    for (var i = 0; i < n; i++) {
-      var t = ((i / n) + phase) % 1;
-      var p = K.polyAt(pts, t);
-      K.chargeDot(ctx, p.x, p.y, o.r || 4.2, 'pos', { ring: false, glow: !!o.glow });
-    }
+    Z.bgGrid(ctx, W, H, { step: 46 * Z.sc(H) });
+    var k = Z.sc(H);
+    /* 可点提示环（静态，不闪烁） */
+    if (o.rings) o.rings.forEach(function (r) { tapRing(ctx, r[0], r[1], r[2], r[3], { k: k }); });
+    /* 底部混排字幕 */
+    if (o.cn || S.caption) Z.caption111(ctx, W, H, o.cn || S.caption, o.en || S.captionEn || '', { k: k, bottom: 52 });
+    /* 左下常驻图例 */
+    if (o.legend !== false) Z.legend111(ctx, L.legendX, L.legendY, { k: k });
+    /* 右侧概念卡 */
+    if (o.card && o.card.length) Z.conceptCard(ctx, L.cx, L.cy, o.card, { k: k });
   }
-  /* 柏松：小球带电体 + 电荷符号阵列 */
-  function chargedBall(ctx, cx, cy, r, kind, count, o) {
-    o = o || {};
-    var col = kind === 'pos' ? C.pos : C.neg;
-    ctx.save();
-    var g = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
-    g.addColorStop(0, kind === 'pos' ? MAT.pos.hi : MAT.neg.hi);
-    g.addColorStop(0.5, col); g.addColorStop(1, kind === 'pos' ? MAT.pos.lo : MAT.neg.lo);
-    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = g; ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.6; ctx.stroke();
-    ctx.restore();
-    var marks = '';
-    for (var i = 0; i < count; i++) marks += (kind === 'pos' ? '+' : '−') + ' ';
-    if (count > 0) txt(ctx, marks.trim(), cx, cy, { size: Math.max(11, r * 0.62), align: 'center', color: C.white, w: 700 });
-    if (o.label) txt(ctx, o.label, cx, cy + r + 16, { size: 13, align: 'center', color: C.white });
-  }
-  /* 底部小坐标轴（自绘，用于 U–t / I–t / v–t） */
-  function miniAxes(ctx, x, y, w, h, o) {
-    o = o || {};
-    var k = o.k || 1;
-    seg(ctx, x, y + h, x + w, y + h, { color: 'rgba(255,255,255,0.85)', w: 1.6 * k });
-    seg(ctx, x, y, x, y + h, { color: 'rgba(255,255,255,0.85)', w: 1.6 * k });
-    arrow(ctx, x + w - 12 * k, y + h, x + w, y + h, 'rgba(255,255,255,0.85)', 1.4 * k);
-    arrow(ctx, x, y + 12 * k, x, y, 'rgba(255,255,255,0.85)', 1.4 * k);
-    txt(ctx, o.xlab || 't', x + w + 2 * k, y + h, { size: 12 * k, color: C.grey });
-    txt(ctx, o.ylab || '', x, y - 9 * k, { size: 12 * k, color: C.grey, align: 'center' });
-    return { x: x, y: y, w: w, h: h };
-  }
-  /* 可点提示：给画布上的可点对象描一圈极淡的提示环 + 右上角「可点」角标
-     依据：课件要"能点"，但禁止装饰性动画 —— 提示用静态细环，不闪烁 */
   function tapRing(ctx, x, y, w, h, o) {
     o = o || {};
     var k = o.k || 1;
     ctx.save();
-    ctx.strokeStyle = o.color || 'rgba(5,232,253,0.42)';
+    ctx.strokeStyle = 'rgba(46,159,208,0.45)';
     ctx.lineWidth = 1.2 * k;
     ctx.setLineDash([4 * k, 4 * k]);
-    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, 6 * k); ctx.stroke(); }
-    else ctx.strokeRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
     ctx.setLineDash([]);
-    /* 右上角小角标 */
-    var r = 5.2 * k;
-    ctx.beginPath(); ctx.arc(x + w - r * 0.4, y + r * 0.4, r, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(5,232,253,0.30)'; ctx.fill();
-    ctx.strokeStyle = 'rgba(5,232,253,0.85)'; ctx.lineWidth = 1.1 * k; ctx.stroke();
     ctx.restore();
   }
-  /* 版面骨架 */
-  function frame(ctx, W, H, S, o) {
-    o = o || {};
-    var k = sc(H);
-    K.watermark(ctx, W, H);
-    K.brand(ctx, W, H);
-    if (o.grid) K.graphPaper(ctx, W, H, { step: 46 * k, color: 'rgba(14,138,150,0.12)' });
-    K.sectionTitle(ctx, 22 * k, 30 * k, o.cn || S.actName || '', o.en || S.actEn || '',
-      { cnSize: 23 * k, enSize: 13 * k, cnColor: o.cnColor || C.white });
-    if (o.bullets && o.bullets.length) K.bullets(ctx, 24 * k, 100 * k, o.bullets, { size: 14 * k, marker: 'tri', markColor: C.neg });
-    if (o.legend) K.legend(ctx, W * 0.62, H - 78 * k, o.legend, { size: 13.5 * k, gap: 148 * k, r: 6 * k });
-    if (o.caption) K.caption(ctx, W, H, o.caption, { size: 21 * k, bottom: 26 * k });
-  }
-  function bx(W, H, o) {
-    o = o || {};
-    return {
-      x0: W * (o.l == null ? 0.36 : o.l), x1: W * (o.r == null ? 0.955 : o.r),
-      y0: H * (o.t == null ? 0.14 : o.t), y1: H * (o.b == null ? 0.80 : o.b)
-    };
-  }
-  function px(b, u) { return b.x0 + (b.x1 - b.x0) * u; }
-  function py(b, v) { return b.y0 + (b.y1 - b.y0) * v; }
 
   /* =====================================================================
-     场景 1 · 两次放电：瞬间的闪电 vs 持续发光的灯泡（环节①）
+     场景 1 · 闪电一瞬间 vs 灯泡一直亮（环节①）
      ===================================================================== */
   function scIntro(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.37, r: 0.95 });
-    frame(ctx, W, H, S, {
-      bullets: S.bullets, caption: S.caption,
-      legend: [{ text: '瞬间电流', color: C.mark }, { text: '持续电流', color: C.gold }]
+    var k = Z.sc(H), L = layout(W, H, { card: false });
+    shell(ctx, W, H, S, L, {
+      cn: '闪电只有一瞬间，灯泡却能一直亮', en: 'Steady current, at last',
+      legend: false,
+      rings: [[W * 0.20, H * 0.20, W * 0.18, H * 0.42], [W * 0.56, H * 0.16, W * 0.34, H * 0.54]]
     });
-    /* —— 左：感应起电机两个金属球，摇动 → 火花 —— */
-    var cx1 = px(b, 0.16), cy = py(b, 0.34), r = 22 * k;
-    var spark = S.sparkOn;
-    seg(ctx, cx1 - 96 * k, py(b, 0.80), cx1 + 96 * k, py(b, 0.80), { color: 'rgba(255,255,255,0.5)', w: 2 * k });
-    txt(ctx, '感应起电机（人工闪电）', cx1, py(b, 0.92), { size: 13 * k, align: 'center', color: C.white });
-    K.chargeDot(ctx, cx1 - 34 * k, cy, r * 0.62, 'pos', { glow: false });
-    K.chargeDot(ctx, cx1 + 34 * k, cy, r * 0.62, 'neg', { glow: false });
-    txt(ctx, '+', cx1 - 34 * k, cy, { size: 17 * k, align: 'center', color: C.white, w: 700 });
-    txt(ctx, '−', cx1 + 34 * k, cy, { size: 17 * k, align: 'center', color: '#101010', w: 700 });
-    if (spark > 0.02) {
+    /* 左：两球 + 火花 */
+    var cx1 = W * 0.29, cy = H * 0.40, gapx = 46 * k;
+    Z.plate(ctx, cx1 - gapx, cy, 12 * k, 90 * k, {});
+    Z.plate(ctx, cx1 + gapx, cy, 12 * k, 90 * k, {});
+    Z.chargeColumn(ctx, cx1 - gapx, cy - 38 * k, cy + 38 * k, 5, 'pos', { r: 4 * k });
+    Z.chargeColumn(ctx, cx1 + gapx, cy - 38 * k, cy + 38 * k, 5, 'neg', { r: 4 * k });
+    if (S.spark > 0.02) {
       ctx.save();
-      ctx.globalAlpha = 0.35 + 0.65 * spark;
-      K.fieldArrow(ctx, { x: cx1 - 22 * k, y: cy }, { x: cx1 + 22 * k, y: cy }, C.mark, 3 * k);
-      K.glowDot(ctx, cx1, cy, 5 * k, C.mark, { halo: 3.4, haloAlpha: 0.4 });
+      ctx.globalAlpha = 0.4 + 0.6 * S.spark / 1;
+      ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 3 * k;
+      ctx.beginPath(); ctx.moveTo(cx1 - gapx + 8 * k, cy); ctx.lineTo(cx1 + gapx - 8 * k, cy); ctx.stroke();
       ctx.restore();
     }
-    txt(ctx, spark > 0.02 ? '火花放电' : '等待放电', cx1, cy - 44 * k, { size: 12.5 * k, align: 'center', color: spark > 0.02 ? C.mark : C.grey, w: 600 });
-    tapRing(ctx, cx1 - 62 * k, cy - 30 * k, 124 * k, 60 * k, { k: k });
+    Z.T(ctx, '感应起电机（人工闪电）', cx1, cy + 76 * k, { size: 19 * k, align: 'center', color: K.dim });
+    Z.T(ctx, S.spark > 0.02 ? '一次放电：电荷放掉就没了' : '等待放电', cx1, cy - 74 * k,
+      { size: 19 * k, align: 'center', color: S.spark > 0.02 ? K.text : K.dim });
 
-    /* —— 右：干电池 + 小灯泡，一直亮 —— */
-    var cx2 = px(b, 0.70);
-    var loopY = py(b, 0.30), loopY2 = py(b, 0.70);
-    K.circuit(ctx, [[cx2 - 90 * k, loopY], [cx2 + 90 * k, loopY], [cx2 + 90 * k, loopY2], [cx2 - 90 * k, loopY2], [cx2 - 90 * k, loopY]],
-      { color: C.white, w: 2 * k });
-    lamp(ctx, cx2 + 90 * k, (loopY + loopY2) / 2, 15 * k, { on: true, w: 2 * k });
-    K.batterySymbol(ctx, cx2 - 90 * k, (loopY + loopY2) / 2, { color: C.orange, w: 3.4 * k });
-    txt(ctx, '电池', cx2 - 90 * k - 14 * k, (loopY + loopY2) / 2, { size: 12.5 * k, align: 'right', color: C.orange });
-    txt(ctx, '灯泡一直亮', cx2 + 90 * k + 14 * k, (loopY + loopY2) / 2, { size: 12.5 * k, align: 'left', color: C.gold });
-    flow(ctx, [[cx2 - 60 * k, loopY], [cx2 + 60 * k, loopY]], 5, S.flowPhase, { r: 3.6 * k, glow: true });
-    txt(ctx, '持续电流', cx2, loopY - 24 * k, { size: 13 * k, align: 'center', color: C.gold, w: 600 });
-    tapRing(ctx, cx2 - 108 * k, loopY - 14 * k, 216 * k, (loopY2 - loopY) + 28 * k, { k: k });
-    readoutBlock(ctx, px(b, 0.60), py(b, 0.86), 150 * k, [
-      ['摇动速度', (S.spark * 100).toFixed(0) + ' %'],
-      ['小灯泡', '一直亮']
-    ], { k: k });
+    /* 右：干电池 + 灯泡回路 */
+    var rx = W * 0.72, yT = H * 0.24, yB = H * 0.56, bx = rx - 90 * k;
+    Z.wirePath(ctx, [[bx - 66 * k, yT], [rx + 66 * k, yT], [rx + 66 * k, yB], [bx - 66 * k, yB], [bx - 66 * k, yT]], { w: 3 * k });
+    Z.battery(ctx, bx, yB, 96 * k, 34 * k, { k: k, horiz: true });
+    Z.T(ctx, '电池', bx, yB + 36 * k, { size: 19 * k, align: 'center', color: K.dim });
+    /* 灯泡 */
+    var lx = rx + 66 * k, ly = (yT + yB) / 2;
+    ctx.save();
+    ctx.strokeStyle = K.text; ctx.lineWidth = 2.4 * k;
+    ctx.beginPath(); ctx.arc(lx, ly, 20 * k, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(lx - 13 * k, ly + 13 * k); ctx.lineTo(lx + 13 * k, ly - 13 * k); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(lx - 13 * k, ly - 13 * k); ctx.lineTo(lx + 13 * k, ly + 13 * k); ctx.stroke();
+    if (S.lampOn) {
+      var g = ctx.createRadialGradient(lx, ly, 0, lx, ly, 54 * k);
+      g.addColorStop(0, 'rgba(255,255,255,0.20)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(lx, ly, 54 * k, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+    Z.chargeFlow(ctx, [[bx + 48 * k, yT], [rx + 66 * k, yT]], 6, S.flowPhase, { kind: 'neg', r: 4.4 * k });
+    Z.T(ctx, '小灯泡一直亮：电流没有断', rx, yB + 70 * k, { size: 19 * k, align: 'center', color: K.text });
   }
 
   /* =====================================================================
-     场景 2 · 两个带电体被导线连起来：只有瞬间电流（环节①）
+     场景 2 · 两带电板 + 导线 H：只有瞬间电流（环节①）
      ===================================================================== */
   function scTransient(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption });
-    var ax = px(b, 0.13), axc = px(b, 0.50), bx1 = px(b, 0.80);
-    var cy = py(b, 0.30), r = 26 * k;
-    /* 导线 H（上下两条水平线 + 两端竖线） */
-    var yTop = py(b, 0.68), yBot = py(b, 0.80);
-    K.circuit(ctx, [[ax, yTop], [axc, yTop], [bx1, yTop]], { color: C.white, w: 2 * k });
-    K.circuit(ctx, [[ax, yBot], [axc, yBot], [bx1, yBot]], { color: C.white, w: 2 * k });
-    seg(ctx, ax, yTop, ax, cy + r, { color: C.white, w: 2 * k });
-    seg(ctx, bx1, yTop, bx1, cy + r, { color: C.white, w: 2 * k });
-    seg(ctx, ax, yBot, ax, cy + r, { color: C.white, w: 2 * k });
-    seg(ctx, bx1, yBot, bx1, cy + r, { color: C.white, w: 2 * k });
-    txt(ctx, 'H', axc, yTop - 16 * k, { size: 13 * k, align: 'center', color: C.white, w: 600 });
-
-    chargedBall(ctx, ax, cy, r, 'pos', S.nA, { label: 'A（带正电）' });
-    chargedBall(ctx, bx1, cy, r, 'neg', S.nB, { label: 'B（带负电）' });
-
-    /* 电子沿导线从 B 流向 A（上支路 B→A，下支路 A→B 循环） */
-    var pts = [[bx1 - r, cy], [bx1, cy + r * 1.6], [bx1, yTop], [axc, yTop], [ax, yTop], [ax, cy + r * 1.6], [ax + r, cy]];
-    if (S.I > 1e-6) flow(ctx, pts, 7, S.flowPhase, { r: 3.8 * k, glow: true });
-    arrow(ctx, axc - 42 * k, yTop, axc, yTop, C.white, 2 * k);
-    txt(ctx, '电子 B → A', axc, yTop + 15 * k, { size: 12.5 * k, align: 'center', color: C.grey });
-
-    /* 右侧 U–t 曲线 */
-    var mx = px(b, 0.62), my = py(b, 0.52), mw = 190 * k, mh = 100 * k;
-    var A = miniAxes(ctx, mx, my, mw, mh, { k: k, ylab: 'U' });
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: '两板用导线连起来：电流只是瞬间的', en: 'Transient current',
+      card: [
+        { label: '起因', text: 'A 带正电、B 带负电' },
+        { label: '过程', text: '电子从 B 经导线跑到 A', color: K.neg },
+        { label: '结果', text: '电势差消失 → 等势体', color: K.text },
+        { formula: 'U → 0  ⇒  I → 0' }
+      ],
+      rings: [[mx(L, 0.04), my(L, 0.06), (L.mx1 - L.mx0) * 0.20, (L.my1 - L.my0) * 0.86],
+              [mx(L, 0.76), my(L, 0.06), (L.mx1 - L.mx0) * 0.20, (L.my1 - L.my0) * 0.86]]
+    });
+    var ax = mx(L, 0.14), bx1 = mx(L, 0.86), cy = my(L, 0.30), ph = (L.my1 - L.my0) * 0.62;
+    Z.plate(ctx, ax, cy + ph / 2 - 60 * k, 13 * k, ph, {});
+    Z.plate(ctx, bx1, cy + ph / 2 - 60 * k, 13 * k, ph, {});
+    Z.T(ctx, 'A', ax - 26 * k, cy + ph / 2 - 60 * k, { size: 24 * k, color: K.text, base: 'middle' });
+    Z.T(ctx, 'B', bx1 + 26 * k, cy + ph / 2 - 60 * k, { size: 24 * k, color: K.text, base: 'middle' });
+    /* 板上的电荷（随放电衰减） */
+    Z.chargeColumn(ctx, ax - 12 * k, cy + 20 * k, cy + ph - 90 * k, Math.max(0, S.nA), 'pos', { r: 4.6 * k });
+    Z.chargeColumn(ctx, bx1 + 12 * k, cy + 20 * k, cy + ph - 90 * k, Math.max(0, S.nB), 'neg', { r: 4.6 * k });
+    /* 导线（顶部折线） */
+    var yT = my(L, 0.10);
+    Z.wirePath(ctx, [[ax, yT], [bx1, yT]], { w: 3 * k });
+    Z.wirePath(ctx, [[ax, yT], [ax, cy]], { w: 3 * k });
+    Z.wirePath(ctx, [[bx1, yT], [bx1, cy]], { w: 3 * k });
+    Z.T(ctx, 'H', (ax + bx1) / 2, yT - 22 * k, { size: 22 * k, align: 'center', color: K.text });
+    if (S.I > 1e-6) {
+      Z.chargeFlow(ctx, [[bx1, yT], [ax, yT]], 7, S.flowPhase, { kind: 'neg', r: 4.4 * k });
+    }
+    /* 微型 U–t 曲线 */
+    var gx = mx(L, 0.06), gy = my(L, 0.62), gw = (L.mx1 - L.mx0) * 0.30, gh = (L.my1 - L.my0) * 0.20;
     ctx.save();
-    ctx.strokeStyle = C.gold; ctx.lineWidth = 2.2 * k;
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.6 * k;
+    ctx.beginPath(); ctx.moveTo(gx, gy + gh); ctx.lineTo(gx + gw, gy + gh); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx, gy + gh); ctx.stroke();
+    ctx.strokeStyle = K.neg; ctx.lineWidth = 2.6 * k;
     ctx.beginPath();
     for (var i = 0; i <= 40; i++) {
-      var tt = i / 40;
-      var yy = A.y + A.h - A.h * Math.exp(-tt * 5);
-      i ? ctx.lineTo(A.x + A.w * tt, yy) : ctx.moveTo(A.x, yy);
+      var tt = i / 40, yy = gy + gh - gh * Math.exp(-tt * 5);
+      i ? ctx.lineTo(gx + gw * tt, yy) : ctx.moveTo(gx, yy);
     }
     ctx.stroke();
     ctx.restore();
-    K.glowDot(ctx, A.x + A.w * S.tn, A.y + A.h - A.h * S.frac, 3.6 * k, C.gold, { halo: 2.6 });
-    txt(ctx, '电势差很快消失', mx, my - 14 * k, { size: 12.5 * k, color: C.gold });
-
-    readoutBlock(ctx, px(b, 0.62), py(b, 0.84), 200 * k, [
-      ['两极电势差 U', P.fmt(S.U, 1) + ' V', C.gold],
-      ['导线电流 I', P.fmt(S.I, 2) + ' A', C.mark],
-      ['经过的电荷 q', P.fmt(S.qPass, 4) + ' C']
-    ], { k: k });
+    Z.charge(ctx, gx + gw * S.tn, gy + gh - gh * S.frac, 4.4 * k, 'neg', {});
+    Z.T(ctx, 'U', gx - 12 * k, gy, { size: 20 * k, align: 'right', color: K.dim });
+    Z.T(ctx, 't', gx + gw + 12 * k, gy + gh, { size: 20 * k, color: K.dim });
   }
 
   /* =====================================================================
-     场景 3 · 装置 P：把电子从 A 搬回 B（环节②）
+     场景 3 · 装置 P：先问后命名（环节②）
      ===================================================================== */
   function scSource(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption, grid: true });
-    var ax = px(b, 0.15), bx1 = px(b, 0.80), cy = py(b, 0.32), r = 24 * k;
-    var yTop = py(b, 0.66), yBot = py(b, 0.86);
-    /* 导线回路 */
-    K.circuit(ctx, [[ax, yTop], [bx1, yTop]], { color: C.white, w: 2 * k });
-    K.circuit(ctx, [[ax, yBot], [bx1, yBot]], { color: C.white, w: 2 * k });
-    seg(ctx, ax, yTop, ax, cy + r, { color: C.white, w: 2 * k });
-    seg(ctx, bx1, yTop, bx1, cy + r, { color: C.white, w: 2 * k });
-    seg(ctx, ax, yBot, ax, cy + r, { color: C.white, w: 2 * k });
-    seg(ctx, bx1, yBot, bx1, cy + r, { color: C.white, w: 2 * k });
-    /* 装置 P（下支路中间，橙色方框） */
-    var pw = 108 * k, ph = 44 * k, pcx = (ax + bx1) / 2, pcy = yBot;
-    ctx.save();
-    ctx.fillStyle = 'rgba(248,128,8,0.16)';
-    ctx.fillRect(pcx - pw / 2, pcy - ph / 2, pw, ph);
-    ctx.strokeStyle = C.orange; ctx.lineWidth = 2.2 * k;
-    ctx.strokeRect(pcx - pw / 2, pcy - ph / 2, pw, ph);
-    ctx.restore();
-    txt(ctx, S.revealedP ? '装置 P（电源）' : '装置 ？', pcx, pcy, { size: 14 * k, align: 'center', color: C.orange, w: 700 });
-    txt(ctx, S.revealedP ? '把电子从 A 搬回 B' : '它能把电子从 A 取走、补回 B', pcx, pcy + ph / 2 + 18 * k,
-      { size: 12.5 * k, align: 'center', color: C.orange });
-    tapRing(ctx, pcx - pw / 2 - 4 * k, pcy - ph / 2 - 4 * k, pw + 8 * k, ph + 8 * k, { k: k });
-
-    chargedBall(ctx, ax, cy, r, 'pos', S.nA, { label: 'A 极' });
-    chargedBall(ctx, bx1, cy, r, 'neg', S.nB, { label: 'B 极' });
-    /* 电子：上支路 B→A（导线中的电流方向与电子相反） */
-    flow(ctx, [[bx1 - r, cy], [bx1, yTop], [(ax + bx1) / 2, yTop], [ax, yTop], [ax + r, cy]], 6, S.flowPhase, { r: 3.8 * k, glow: true });
-    /* 装置 P 内：把电子从 A 侧搬回 B 侧（沿下支路从 A 到 B 再回 B 极） */
-    flow(ctx, [[ax + r, cy], [ax, yBot], [pcx - pw / 2, yBot], [pcx + pw / 2, yBot], [bx1, yBot], [bx1 - r, cy]],
-      6, S.pumpPhase, { r: 3.8 * k, glow: S.pump >= 0.95 });
-    arrow(ctx, ax + 60 * k, yTop, ax + 100 * k, yTop, C.white, 2 * k);
-    txt(ctx, '导线中的电流（B → A）', (ax + bx1) / 2, yTop - 18 * k, { size: 12.5 * k, align: 'center', color: C.grey });
-    txt(ctx, 'P 把电子搬回 B 极', pcx, pcy + ph / 2 + 38 * k, { size: 12.5 * k, align: 'center', color: C.orange });
-
-    readoutBlock(ctx, px(b, 0.60), py(b, 0.02), 210 * k, [
-      ['装置 P 搬运速率', P.fmt(S.pumpSpeed, 2) + ' A', C.orange],
-      ['导线流失速率', '1.00 A'],
-      ['两极电荷量', S.steady ? '保持不变' : '正在失衡', S.steady ? C.gold : C.mark],
-      ['导线电流 I', S.steady ? '1.00 A 恒定' : P.fmt(S.I, 2) + ' A 在变', S.steady ? C.gold : C.mark]
-    ], { k: k });
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: S.revealedP ? '这个装置就是电源：它把电子从 A 搬回 B' : '加一个装置：它能补上失去的电子',
+      en: 'Power source',
+      card: S.revealedP ? [
+        { label: '装置', text: '能把电子从 A 搬运到 B', color: K.neg },
+        { label: '名称', text: '电源（power source）', color: K.text },
+        { label: '电极', text: 'A、B 是它的两个电极' },
+        { label: '关键', text: '它不产生电荷，只搬运电荷', color: K.neg }
+      ] : [
+        { label: '问题', text: '怎么才能得到持续不断的电流？' },
+        { label: '条件', text: '两极之间始终存在电势差' },
+        { note: '（先别管它叫什么）' }
+      ],
+      rings: [[mx(L, 0.36), my(L, 0.66), (L.mx1 - L.mx0) * 0.30, (L.my1 - L.my0) * 0.20]]
+    });
+    var ax = mx(L, 0.16), bx1 = mx(L, 0.84), yT = my(L, 0.14), yB = my(L, 0.80);
+    var ph = (L.my1 - L.my0) * 0.52, pcy = my(L, 0.34);
+    Z.plate(ctx, ax, pcy, 13 * k, ph, {});
+    Z.plate(ctx, bx1, pcy, 13 * k, ph, {});
+    Z.T(ctx, 'A', ax - 24 * k, pcy, { size: 24 * k });
+    Z.T(ctx, 'B', bx1 + 24 * k, pcy, { size: 24 * k });
+    Z.chargeColumn(ctx, ax - 12 * k, pcy - ph / 2 + 24 * k, pcy + ph / 2 - 24 * k, Math.max(1, S.nA), 'pos', { r: 4.6 * k });
+    Z.chargeColumn(ctx, bx1 + 12 * k, pcy - ph / 2 + 24 * k, pcy + ph / 2 - 24 * k, Math.max(1, S.nB), 'neg', { r: 4.6 * k });
+    Z.wirePath(ctx, [[ax, yT], [bx1, yT]], { w: 3 * k });
+    Z.wirePath(ctx, [[ax, yT], [ax, pcy - ph / 2]], { w: 3 * k });
+    Z.wirePath(ctx, [[bx1, yT], [bx1, pcy - ph / 2]], { w: 3 * k });
+    Z.wirePath(ctx, [[ax, yB], [bx1, yB]], { w: 3 * k });
+    Z.wirePath(ctx, [[ax, yB], [ax, pcy + ph / 2]], { w: 3 * k });
+    Z.wirePath(ctx, [[bx1, yB], [bx1, pcy + ph / 2]], { w: 3 * k });
+    /* 装置块 */
+    var bw = (L.mx1 - L.mx0) * 0.24, bh = 46 * k, bcx = (ax + bx1) / 2;
+    Z.battery(ctx, bcx, yB, bw, bh, { k: k });
+    Z.T(ctx, S.revealedP ? '电池（电源）' : '某种装置', bcx, yB + 40 * k, { size: 20 * k, align: 'center', color: K.dim });
+    Z.chargeFlow(ctx, [[bx1, yT], [ax, yT]], 6, S.flowPhase, { kind: 'neg', r: 4.4 * k });
+    Z.chargeFlow(ctx, [[ax, yB], [bcx - bw / 2, yB]], 3, S.pumpPhase, { kind: 'neg', r: 4.4 * k });
+    Z.chargeFlow(ctx, [[bcx + bw / 2, yB], [bx1, yB]], 3, S.pumpPhase, { kind: 'neg', r: 4.4 * k });
   }
 
   /* =====================================================================
-     场景 4 · 抽水机类比（环节②，只类比“维持差额”）
+     场景 4 · 抽水机类比（环节②）
      ===================================================================== */
   function scPump(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption });
-    /* 左：抽水系统 */
-    var lx = px(b, 0.22), hiY = py(b, 0.20), loY = py(b, 0.72), wTank = 110 * k;
-    ctx.save();
-    ctx.strokeStyle = C.white; ctx.lineWidth = 2 * k;
-    ctx.strokeRect(lx - wTank / 2, hiY, wTank, 46 * k);
-    ctx.strokeRect(lx - wTank / 2, loY, wTank, 46 * k);
-    ctx.fillStyle = 'rgba(14,138,150,0.25)';
-    ctx.fillRect(lx - wTank / 2, hiY + 20 * k, wTank, 26 * k);
-    ctx.fillRect(lx - wTank / 2, loY + 6 * k, wTank, 40 * k);
-    ctx.restore();
-    txt(ctx, '高水位', lx, hiY - 12 * k, { size: 12.5 * k, align: 'center', color: C.white });
-    txt(ctx, '低水位', lx, loY + 62 * k, { size: 12.5 * k, align: 'center', color: C.white });
-    seg(ctx, lx + wTank / 2, hiY + 24 * k, lx + wTank / 2 + 60 * k, hiY + 24 * k, { color: C.white, w: 2 * k });
-    seg(ctx, lx + wTank / 2 + 60 * k, hiY + 24 * k, lx + wTank / 2 + 60 * k, loY + 24 * k, { color: C.white, w: 2 * k });
-    seg(ctx, lx + wTank / 2 + 60 * k, loY + 24 * k, lx + wTank / 2, loY + 24 * k, { color: C.white, w: 2 * k });
-    flow(ctx, [[lx + wTank / 2, hiY + 24 * k], [lx + wTank / 2 + 60 * k, hiY + 24 * k],
-      [lx + wTank / 2 + 60 * k, loY + 24 * k]], 4, S.flowPhase, { r: 3.6 * k });
-    ctx.save();
-    ctx.fillStyle = 'rgba(248,128,8,0.16)'; ctx.fillRect(lx - wTank / 2, (hiY + loY) / 2 + 30 * k, wTank, 34 * k);
-    ctx.strokeStyle = C.orange; ctx.lineWidth = 2 * k; ctx.strokeRect(lx - wTank / 2, (hiY + loY) / 2 + 30 * k, wTank, 34 * k);
-    ctx.restore();
-    txt(ctx, '抽水机', lx, (hiY + loY) / 2 + 47 * k, { size: 12.5 * k, align: 'center', color: C.orange });
-    arrow(ctx, lx - 22 * k, loY + 8 * k, lx - 22 * k, (hiY + loY) / 2 + 28 * k, C.orange, 2 * k);
-    txt(ctx, '把水从低处送到高处', lx, py(b, 0.95), { size: 12.5 * k, align: 'center', color: C.grey });
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: '抽水机维持水位差，电源维持电势差', en: 'Only the gap is analogous',
+      card: [
+        { label: '抽水机', text: '搬水，维持水位差' },
+        { label: '电源', text: '搬电荷，维持电势差', color: K.neg },
+        { note: '共同内核只有一条：维持差额' },
+        { note: '对象不同、差额不同 —— 不能等同', color: K.dim }
+      ],
+      rings: [[mx(L, 0.0), my(L, 0), (L.mx1 - L.mx0) * 0.44, (L.my1 - L.my0)],
+              [mx(L, 0.52), my(L, 0), (L.mx1 - L.mx0) * 0.46, (L.my1 - L.my0)]]
+    });
+    /* 左：两个水池 + 泵 */
+    var lx = mx(L, 0.20), hiY = my(L, 0.10), loY = my(L, 0.72), tw = (L.mx1 - L.mx0) * 0.30;
+    Z.wirePath(ctx, [[lx - tw / 2, hiY], [lx + tw / 2, hiY], [lx + tw / 2, hiY + 54 * k], [lx - tw / 2, hiY + 54 * k], [lx - tw / 2, hiY]], { w: 2.4 * k });
+    Z.wirePath(ctx, [[lx - tw / 2, loY], [lx + tw / 2, loY], [lx + tw / 2, loY + 54 * k], [lx - tw / 2, loY + 54 * k], [lx - tw / 2, loY]], { w: 2.4 * k });
+    Z.T(ctx, '高水位', lx, hiY - 22 * k, { size: 19 * k, align: 'center', color: K.dim });
+    Z.T(ctx, '低水位', lx, loY + 76 * k, { size: 19 * k, align: 'center', color: K.dim });
+    Z.wirePath(ctx, [[lx + tw / 2, hiY + 27 * k], [lx + tw * 0.95, hiY + 27 * k], [lx + tw * 0.95, loY + 27 * k], [lx + tw / 2, loY + 27 * k]], { w: 2.6 * k });
+    Z.chargeFlow(ctx, [[lx + tw / 2, hiY + 27 * k], [lx + tw * 0.95, hiY + 27 * k], [lx + tw * 0.95, loY + 27 * k]],
+      4, S.flowPhase, { kind: 'neg', r: 4.4 * k });
+    Z.T(ctx, '抽水机', lx - tw * 0.72, (hiY + loY) / 2, { size: 20 * k, align: 'center', color: K.text });
 
-    /* 右：电源维持电势差 */
-    var rx = px(b, 0.72);
-    seg(ctx, rx - 60 * k, hiY + 24 * k, rx + 60 * k, hiY + 24 * k, { color: C.white, w: 2 * k });
-    seg(ctx, rx - 60 * k, loY + 24 * k, rx + 60 * k, loY + 24 * k, { color: C.white, w: 2 * k });
-    seg(ctx, rx - 60 * k, hiY + 24 * k, rx - 60 * k, loY + 24 * k, { color: C.white, w: 2 * k });
-    seg(ctx, rx + 60 * k, hiY + 24 * k, rx + 60 * k, loY + 24 * k, { color: C.white, w: 2 * k });
-    txt(ctx, '正极（高电势）', rx, hiY + 6 * k, { size: 12.5 * k, align: 'center', color: C.pos });
-    txt(ctx, '负极（低电势）', rx, loY + 56 * k, { size: 12.5 * k, align: 'center', color: C.neg });
-    K.batterySymbol(ctx, rx - 60 * k, (hiY + loY) / 2 + 46 * k, { color: C.orange, w: 3.4 * k });
-    txt(ctx, '电源', rx - 60 * k - 16 * k, (hiY + loY) / 2 + 46 * k, { size: 12.5 * k, align: 'right', color: C.orange });
-    flowPos(ctx, [[rx - 60 * k, loY + 24 * k], [rx - 60 * k, hiY + 24 * k]], 3, 1 - S.flowPhase, { r: 3.6 * k });
-    flowPos(ctx, [[rx + 60 * k, hiY + 24 * k], [rx + 60 * k, loY + 24 * k]], 3, S.flowPhase, { r: 3.6 * k });
-    txt(ctx, '把正电荷从负极搬到正极', rx, py(b, 0.95), { size: 12.5 * k, align: 'center', color: C.grey });
-    txt(ctx, '水位差 ←→ 电势差', px(b, 0.47), py(b, 0.02), { size: 13.5 * k, align: 'center', color: C.gold, w: 600 });
-    tapRing(ctx, px(b, 0.12), py(b, 0.10), (b.x1 - b.x0) * 0.20, (b.y1 - b.y0) * 0.86, { k: k });
-    tapRing(ctx, px(b, 0.60), py(b, 0.10), (b.x1 - b.x0) * 0.36, (b.y1 - b.y0) * 0.86, { k: k });
-    tapRing(ctx, px(b, 0.42), py(b, 0.88), (b.x1 - b.x0) * 0.44, (b.y1 - b.y0) * 0.12, { k: k });
+    /* 右：电源回路 */
+    var rx = mx(L, 0.76), ry1 = my(L, 0.20), ry2 = my(L, 0.72);
+    Z.wirePath(ctx, [[rx - 84 * k, ry1], [rx + 84 * k, ry1], [rx + 84 * k, ry2], [rx - 84 * k, ry2], [rx - 84 * k, ry1]], { w: 3 * k });
+    Z.battery(ctx, rx - 84 * k, (ry1 + ry2) / 2, 92 * k, 34 * k, { k: k });
+    Z.T(ctx, '电源', rx - 84 * k, (ry1 + ry2) / 2 + 40 * k, { size: 20 * k, align: 'center', color: K.dim });
+    Z.T(ctx, '高电势', rx + 30 * k, ry1 - 20 * k, { size: 19 * k, align: 'center', color: K.dim });
+    Z.T(ctx, '低电势', rx + 30 * k, ry2 + 24 * k, { size: 19 * k, align: 'center', color: K.dim });
+    Z.chargeFlow(ctx, [[rx - 84 * k, ry2], [rx - 84 * k, ry1], [rx - 40 * k, ry1]], 4, 1 - S.flowPhase, { kind: 'pos', r: 4.4 * k, glow: false });
   }
 
   /* =====================================================================
-     场景 5 · 认知冲突：导线内部有没有电场（环节③）
+     场景 5 · 冲突：导线内部有没有电场（环节③）
      ===================================================================== */
   function scField(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption });
-    /* 左：静电平衡的导体（内部 E = 0） */
-    var lcx = px(b, 0.18), cy = py(b, 0.34), wBox = 120 * k, hBox = 64 * k;
-    K.metalBox(ctx, lcx - wBox / 2, cy - hBox / 2, wBox, hBox, { color: C.white, w: 2 * k });
-    K.chargeDot(ctx, lcx - wBox / 2 + 6 * k, cy, 5 * k, 'neg', { ring: false });
-    K.chargeDot(ctx, lcx + wBox / 2 - 6 * k, cy, 5 * k, 'pos', { ring: false });
-    txt(ctx, '静电平衡', lcx, cy - hBox / 2 - 18 * k, { size: 13 * k, align: 'center', color: C.white, w: 600 });
-    txt(ctx, '内部 E = 0', lcx, cy, { size: 15 * k, align: 'center', color: C.gold, w: 700 });
-    txt(ctx, '没有电荷定向移动', lcx, cy + hBox / 2 + 20 * k, { size: 12.5 * k, align: 'center', color: C.grey });
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: '静电平衡时内部 E = 0，可电路里导线内部 E ≠ 0', en: 'A cognitive conflict',
+      card: [
+        { label: '静电平衡', text: '内部 E = 0，无定向移动' },
+        { label: '电路中', text: '内部 E ≠ 0，有定向移动', color: K.neg },
+        { formula: 'E = U / L' },
+        { note: '解法：不是"站住了"，是"队伍不停、队形不变"' }
+      ],
+      rings: [[mx(L, 0), my(L, 0.04), (L.mx1 - L.mx0) * 0.44, (L.my1 - L.my0) * 0.5],
+              [mx(L, 0.52), my(L, 0.04), (L.mx1 - L.mx0) * 0.46, (L.my1 - L.my0) * 0.5]]
+    });
+    /* 左：静电平衡的导体 */
+    var lx = mx(L, 0.22), ly = my(L, 0.26), bw = (L.mx1 - L.mx0) * 0.30, bh = 92 * k;
+    Z.wirePath(ctx, [[lx - bw / 2, ly - bh / 2], [lx + bw / 2, ly - bh / 2], [lx + bw / 2, ly + bh / 2], [lx - bw / 2, ly + bh / 2], [lx - bw / 2, ly - bh / 2]], { w: 2.6 * k });
+    Z.T(ctx, '静电平衡：内部 E = 0', lx, ly, { size: 22 * k, align: 'center', color: K.text });
+    Z.T(ctx, '电荷站住了', lx, ly + bh / 2 + 26 * k, { size: 19 * k, align: 'center', color: K.dim });
 
-    /* 右：电路中的导线（内部 E ≠ 0） */
-    var rcx = px(b, 0.72);
-    seg(ctx, rcx - 110 * k, cy, rcx + 110 * k, cy, { color: C.white, w: 3 * k });
-    var nArrow = 5;
-    for (var i = 0; i < nArrow; i++) {
-      var x = rcx - 88 * k + i * 44 * k;
-      arrow(ctx, x - 16 * k, cy - 22 * k, x + 16 * k, cy - 22 * k, C.mark, 2 * k);
+    /* 右：电路中导线内部 E ≠ 0 */
+    var rx = mx(L, 0.74), ry = my(L, 0.26), rw = (L.mx1 - L.mx0) * 0.42;
+    Z.wirePath(ctx, [[rx - rw / 2, ry], [rx + rw / 2, ry]], { w: 4 * k });
+    for (var i = 0; i < 5; i++) {
+      var xx = rx - rw / 2 + rw * (i + 0.5) / 5;
+      Z.wirePath(ctx, [[xx - 16 * k, ry - 30 * k], [xx + 16 * k, ry - 30 * k]], { color: K.neg, w: 2.2 * k });
     }
-    txt(ctx, 'E', rcx + 122 * k, cy - 22 * k, { size: 15 * k, color: C.mark, w: 700 });
-    txt(ctx, '电路中', rcx, cy - 58 * k, { size: 13 * k, align: 'center', color: C.white, w: 600 });
-    txt(ctx, '内部 E ≠ 0', rcx, cy + 26 * k, { size: 15 * k, align: 'center', color: C.mark, w: 700 });
-    txt(ctx, '自由电子定向移动', rcx, cy + 52 * k, { size: 12.5 * k, align: 'center', color: C.grey });
-    flow(ctx, [[rcx - 110 * k, cy], [rcx + 110 * k, cy]], 8, S.flowPhase, { r: 3.8 * k, glow: true });
+    Z.M(ctx, 'E', rx + rw / 2 + 18 * k, ry - 30 * k, { size: 26 * k, color: K.neg });
+    Z.chargeFlow(ctx, [[rx - rw / 2, ry], [rx + rw / 2, ry]], 7, S.flowPhase, { kind: 'neg', r: 4.6 * k });
+    Z.T(ctx, '电路中：内部 E ≠ 0', rx, ry + 42 * k, { size: 22 * k, align: 'center', color: K.neg });
 
-    /* 场强换算 */
-    var lx = px(b, 0.30), ly = py(b, 0.88);
-    mtxt(ctx, 'E = U/L', lx - 46 * k, ly, { size: 15 * k });
-    txt(ctx, 'U = ' + P.fmt(S.Uwire, 1) + ' V ，L = 1 m  ⇒  E = ' + P.fmt(S.Ewire, 1) + ' V/m',
-      lx + 10 * k, ly, { size: 13 * k, color: C.white });
-    txt(ctx, '冲突：刚学完“导体内部场强为零”', px(b, 0.63), py(b, 0.88), { size: 13 * k, align: 'center', color: C.mark, w: 600 });
-    tapRing(ctx, lcx - wBox / 2 - 10 * k, cy - hBox / 2 - 30 * k, wBox + 20 * k, hBox + 46 * k, { k: k });
-    tapRing(ctx, rcx - 128 * k, cy - 76 * k, 256 * k, 148 * k, { k: k });
+    Z.T(ctx, 'U = ' + P.fmt(S.Uwire, 1) + ' V，L = 0.10 m ⇒ E = ' + P.fmt(S.Ewire, 1) + ' V/m',
+      mx(L, 0.5), my(L, 0.86), { size: 20 * k, align: 'center', color: K.dim });
   }
 
   /* =====================================================================
-     场景 6 · 动态平衡：电荷“你来我走”、分布不变（环节③）
+     场景 6 · 动态平衡：你来我走、分布不变（环节③）
      ===================================================================== */
   function scFlow(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption });
-    var y = py(b, 0.34), x0 = px(b, 0.06), x1 = px(b, 0.96);
-    seg(ctx, x0, y - 34 * k, x1, y - 34 * k, { color: C.white, w: 3 * k });
-    seg(ctx, x0, y + 34 * k, x1, y + 34 * k, { color: C.white, w: 3 * k });
-    /* 位置固定的“电荷分布”（等间距刻度） */
-    for (var i = 0; i <= 10; i++) {
-      var x = x0 + (x1 - x0) * i / 10;
-      seg(ctx, x, y - 34 * k, x, y - 24 * k, { color: C.gold, w: 2 * k });
-      seg(ctx, x, y + 34 * k, x, y + 24 * k, { color: C.gold, w: 2 * k });
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: '电荷"你来我走"，但各处的分布不变', en: 'Dynamic equilibrium',
+      card: [
+        { label: '有的', text: '流走了' },
+        { label: '另外的', text: '又来补上' },
+        { label: '结果', text: '各处电荷量保持不变', color: K.text },
+        { formula: 'E 不随时间变化' },
+        { note: '⇒ 恒定电场（steady electric field）' }
+      ],
+      rings: [[mx(L, 0), my(L, 0.14), (L.mx1 - L.mx0), (L.my1 - L.my0) * 0.6]]
+    });
+    var y = my(L, 0.36), x0 = mx(L, 0.02), x1 = mx(L, 0.98), hh = 46 * k;
+    Z.wirePath(ctx, [[x0, y - hh], [x1, y - hh]], { w: 3 * k });
+    Z.wirePath(ctx, [[x0, y + hh], [x1, y + hh]], { w: 3 * k });
+    for (var i = 0; i <= 8; i++) {
+      var xx = x0 + (x1 - x0) * i / 8;
+      Z.wirePath(ctx, [[xx, y - hh], [xx, y - hh + 12 * k]], { color: 'rgba(255,255,255,0.5)', w: 1.6 * k });
+      Z.wirePath(ctx, [[xx, y + hh], [xx, y + hh - 12 * k]], { color: 'rgba(255,255,255,0.5)', w: 1.6 * k });
     }
-    txt(ctx, '各位置的电荷分布 —— 始终一样', (x0 + x1) / 2, y - 52 * k, { size: 13 * k, align: 'center', color: C.gold, w: 600 });
-    /* 流动的电子 */
-    flow(ctx, [[x1, y], [x0, y]], 9, S.flowPhase, { r: 4.2 * k, glow: true });
-    txt(ctx, '但电子一直在换：有的流走，另外的又来补上', (x0 + x1) / 2, y + 62 * k, { size: 13 * k, align: 'center', color: C.white });
-    /* 三行对照 */
-    readoutBlock(ctx, px(b, 0.52), py(b, 0.80), 250 * k, [
-      ['电荷分布', '不随时间变化', C.gold],
-      ['电场 E', '不随时间变化', C.gold],
-      ['每个电子的运动', '一直在定向移动', C.mark]
-    ], { k: k });
+    Z.chargeFlow(ctx, [[x1, y], [x0, y]], 10, S.flowPhase, { kind: 'neg', r: 4.8 * k });
+    Z.T(ctx, '电子一直在换，但每个刻度处的分布不变', (x0 + x1) / 2, y + hh + 48 * k,
+      { size: 20 * k, align: 'center', color: K.text });
   }
 
   /* =====================================================================
-     场景 7 · 串联电流表：示数保持恒定（环节③）
-     ===================================================================== */
-  function scAmmeter(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption, grid: true });
-    var x0 = px(b, 0.10), x1 = px(b, 0.88), yT = py(b, 0.26), yB = py(b, 0.74);
-    K.circuit(ctx, [[x0, yT], [x1, yT], [x1, yB], [x0, yB], [x0, yT]], { color: C.white, w: 2.4 * k });
-    K.batterySymbol(ctx, x0, (yT + yB) / 2, { color: C.orange, w: 3.6 * k });
-    txt(ctx, '电源 U = ' + P.fmt(S.Uamm, 1) + ' V', x0 - 18 * k, (yT + yB) / 2, { size: 12.5 * k, align: 'right', color: C.orange });
-    var acx = (x0 + x1) / 2 - 40 * k;
-    ammeter(ctx, acx, yB, 24 * k, S.needle, { k: k });
-    lamp(ctx, x1, (yT + yB) / 2, 16 * k, { on: true, w: 2 * k });
-    flow(ctx, [[x0, yT], [x1, yT], [x1, yT + 20 * k]], 5, S.flowPhase, { r: 3.8 * k, glow: true });
-    /* I–t 平线 */
-    var mx = px(b, 0.56), my = py(b, 0.02), mw = 180 * k, mh = 84 * k;
-    var A = miniAxes(ctx, mx, my, mw, mh, { k: k, ylab: 'I' });
-    var lv = A.y + A.h - A.h * Math.min(0.92, S.Iamm / 3);
-    seg(ctx, A.x, lv, A.x + A.w, lv, { color: C.gold, w: 2.4 * k });
-    txt(ctx, 'I = ' + P.fmt(S.Iamm, 3) + ' A 不变', mx + 4 * k, my - 14 * k, { size: 12.5 * k, color: C.gold });
-    txt(ctx, '恒定电流：大小、方向都不随时间变化', (A.x + A.x + A.w) / 2, my + mh + 22 * k, { size: 12.5 * k, align: 'center', color: C.white });
-    tapRing(ctx, acx - 34 * k, yB - 34 * k, 68 * k, 68 * k, { k: k });
-    tapRing(ctx, mx - 12 * k, my - 12 * k, mw + 24 * k, mh + 24 * k, { k: k });
-  }
-
-  /* =====================================================================
-     场景 8 · 加速—碰撞：平均速率不随时间变化（环节③ 难点）
+     场景 7 · 加速—碰撞（环节③）
      ===================================================================== */
   function scSawtooth(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption });
-    var ax = px(b, 0.06), ay = py(b, 0.08), aw = 380 * k, ah = 190 * k;
-    var A = miniAxes(ctx, ax, ay + 20 * k, aw, ah, { k: k, ylab: 'v' });
-    /* 锯齿：每段加速，末端碰撞归零 */
-    var nSeg = 6, segW = A.w / nSeg;
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: '加速—碰撞—加速—碰撞：平均速率不随时间变化', en: 'Accelerate then collide',
+      card: [
+        { label: '静电力', text: '促使电荷运动（加速）' },
+        { label: '碰撞', text: '阻碍电荷运动（减速）', color: K.neg },
+        { note: '两者都有作用' },
+        { formula: 'v̄ 不随时间变化' },
+        { note: 'E = ' + P.fmt(S.EfieldmV, 1) + ' mV/m ⇒ v̄ = ' + P.sci(S.vavg, 2) + ' m/s' }
+      ],
+      rings: [[mx(L, 0), my(L, 0.04), (L.mx1 - L.mx0), (L.my1 - L.my0) * 0.72]]
+    });
+    var ax = mx(L, 0.06), ay = my(L, 0.12), aw = (L.mx1 - L.mx0) * 0.86, ah = (L.my1 - L.my0) * 0.62;
+    Z.wirePath(ctx, [[ax, ay + ah], [ax + aw, ay + ah]], { color: 'rgba(255,255,255,0.55)', w: 1.8 * k });
+    Z.wirePath(ctx, [[ax, ay], [ax, ay + ah]], { color: 'rgba(255,255,255,0.55)', w: 1.8 * k });
+    Z.M(ctx, 'v', ax - 16 * k, ay, { size: 24 * k, color: K.dim });
+    Z.M(ctx, 't', ax + aw + 16 * k, ay + ah, { size: 24 * k, color: K.dim });
+    var nSeg = 6, segW = aw / nSeg;
     ctx.save();
-    ctx.strokeStyle = C.cyan; ctx.lineWidth = 2 * k; ctx.lineJoin = 'miter';
+    ctx.strokeStyle = K.neg; ctx.lineWidth = 2.6 * k; ctx.lineJoin = 'miter';
     ctx.beginPath();
     for (var i = 0; i < nSeg; i++) {
-      var xa = A.x + i * segW, xb = xa + segW;
-      var yMax = A.y + A.h - A.h * 0.62 * S.vScale;
-      i ? ctx.lineTo(xa, A.y + A.h) : ctx.moveTo(xa, A.y + A.h);
+      var xa = ax + i * segW, xb = xa + segW;
+      var yMax = ay + ah - ah * 0.62 * S.vScale;
+      i ? ctx.lineTo(xa, ay + ah) : ctx.moveTo(xa, ay + ah);
       ctx.lineTo(xb, yMax);
-      if (i < nSeg - 1) ctx.lineTo(xb, A.y + A.h);
+      if (i < nSeg - 1) ctx.lineTo(xb, ay + ah);
     }
     ctx.stroke();
     ctx.restore();
-    var yAvg = A.y + A.h - A.h * 0.31 * S.vScale;
-    seg(ctx, A.x, yAvg, A.x + A.w, yAvg, { color: C.gold, w: 2.2 * k, dash: [7, 5] });
-    txt(ctx, 'v̄（平均速率）', A.x + A.w + 8 * k, yAvg, { size: 12 * k, color: C.gold });
-    txt(ctx, '加速', ax + 34 * k, A.y + 34 * k, { size: 12.5 * k, color: C.cyan });
-    txt(ctx, '碰撞', ax + 96 * k, A.y + 12 * k, { size: 12.5 * k, color: C.mark });
-    arrow(ctx, ax + 26 * k, A.y + 48 * k, ax + 62 * k, A.y + 26 * k, C.cyan, 1.8 * k);
-    arrow(ctx, ax + 96 * k, A.y + 26 * k, ax + 96 * k, A.y + 48 * k, C.mark, 1.8 * k);
-    /* 右侧说明块 */
-    readoutBlock(ctx, px(b, 0.62), ay + 30 * k, 215 * k, [
-      ['场强 E', P.fmt(S.EfieldmV, 1) + ' mV/m'],
-      ['加速 a = eE/m', P.sci(P.accel(S.EfieldV), 2) + ' m/s²'],
-      ['峰值速率', P.sci(S.vpeak, 2) + ' m/s'],
-      ['平均速率 v̄', P.sci(S.vavg, 2) + ' m/s', C.gold],
-      ['v̄ 随时间', '不变化', C.gold]
-    ], { k: k });
+    var yAvg = ay + ah - ah * 0.31 * S.vScale;
+    Z.wirePath(ctx, [[ax, yAvg], [ax + aw, yAvg]], { color: 'rgba(255,255,255,0.75)', w: 2.2 * k, dash: [7, 5] });
+    Z.T(ctx, 'v̄', ax + aw + 24 * k, yAvg, { size: 22 * k, color: K.text });
   }
 
   /* =====================================================================
-     场景 9 · 恒定电流 vs 交变电流（环节③ 定义）
+     场景 8 · 电流表：示数恒定（环节③）
+     ===================================================================== */
+  function scAmmeter(ctx, W, H, S) {
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: '串联一只电流表：读数保持恒定', en: 'Steady current',
+      card: [
+        { label: '定义', text: '大小、方向都不随时间变化' },
+        { formula: 'I = ' + P.fmt(S.Iamm, 3) + ' A' },
+        { note: '这一章研究的就是恒定电流' }
+      ],
+      rings: [[mx(L, 0.02), my(L, 0.10), (L.mx1 - L.mx0) * 0.96, (L.my1 - L.my0) * 0.62]]
+    });
+    var x0 = mx(L, 0.04), x1 = mx(L, 0.96), yT = my(L, 0.16), yB = my(L, 0.62);
+    Z.wirePath(ctx, [[x0, yT], [x1, yT], [x1, yB], [x0, yB], [x0, yT]], { w: 3 * k });
+    Z.battery(ctx, x0, (yT + yB) / 2, 92 * k, 34 * k, { k: k });
+    Z.T(ctx, 'U = ' + P.fmt(S.Uamm, 1) + ' V', x0 - 60 * k, (yT + yB) / 2, { size: 20 * k, align: 'center', color: K.dim });
+    /* 电流表 */
+    var acx = mx(L, 0.5), acy = yB, r = 26 * k;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(acx, acy, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#0A0A0A'; ctx.fill();
+    ctx.strokeStyle = K.neg; ctx.lineWidth = 2.6 * k; ctx.stroke();
+    var a0 = Math.PI * 1.15, a1 = Math.PI * 1.85;
+    var a = a0 + (a1 - a0) * S.needle;
+    ctx.strokeStyle = K.text; ctx.lineWidth = 2 * k;
+    ctx.beginPath(); ctx.moveTo(acx, acy); ctx.lineTo(acx + r * 0.66 * Math.cos(a), acy + r * 0.66 * Math.sin(a)); ctx.stroke();
+    ctx.restore();
+    Z.T(ctx, 'A', acx, acy + r * 0.5, { size: 20 * k, align: 'center', color: K.text });
+    Z.chargeFlow(ctx, [[x0, yT], [x1, yT]], 6, S.flowPhase, { kind: 'neg', r: 4.4 * k });
+  }
+
+  /* =====================================================================
+     场景 9 · 恒定电流 vs 交变电流（环节③）
      ===================================================================== */
   function scSteady(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption, grid: true });
-    var ax = px(b, 0.06), ay = py(b, 0.10), aw = 360 * k, ah = 150 * k;
-    var A = miniAxes(ctx, ax, ay + 16 * k, aw, ah, { k: k, ylab: 'I' });
-    var mid = A.y + A.h / 2;
-    seg(ctx, A.x, mid, A.x + aw, mid, { color: 'rgba(255,255,255,0.28)', w: 1 * k, dash: [5, 5] });
-    txt(ctx, '0', A.x - 10 * k, mid, { size: 11.5 * k, color: C.grey, align: 'right' });
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: S.mode ? '恒定电流：大小、方向都不随时间变化' : '交变电流：大小、方向都在变',
+      en: S.mode ? 'Steady current' : 'Alternating current',
+      card: S.mode ? [
+        { label: '恒定', text: 'I 不随时间变化', color: K.text },
+        { label: '方向', text: '也不随时间变化' },
+        { note: '判据：是否随时间变化' }
+      ] : [
+        { label: '交变', text: 'I 随时间变化', color: K.neg },
+        { label: '方向', text: '也在变' }
+      ],
+      rings: [[mx(L, 0), my(L, 0.06), (L.mx1 - L.mx0), (L.my1 - L.my0) * 0.7]]
+    });
+    var ax = mx(L, 0.06), ay = my(L, 0.16), aw = (L.mx1 - L.mx0) * 0.86, ah = (L.my1 - L.my0) * 0.52;
+    Z.wirePath(ctx, [[ax, ay + ah], [ax + aw, ay + ah]], { color: 'rgba(255,255,255,0.55)', w: 1.8 * k });
+    Z.wirePath(ctx, [[ax, ay], [ax, ay + ah]], { color: 'rgba(255,255,255,0.55)', w: 1.8 * k });
+    Z.M(ctx, 'I', ax - 16 * k, ay, { size: 24 * k, color: K.dim });
+    Z.M(ctx, 't', ax + aw + 16 * k, ay + ah, { size: 24 * k, color: K.dim });
+    var mid = ay + ah / 2;
+    Z.wirePath(ctx, [[ax, mid], [ax + aw, mid]], { color: 'rgba(255,255,255,0.22)', w: 1.4 * k, dash: [5, 5] });
     if (S.mode === 1) {
-      var lv = A.y + A.h - A.h * 0.78;
-      seg(ctx, A.x, lv, A.x + aw, lv, { color: C.gold, w: 2.6 * k });
-      txt(ctx, '大小不变、方向不变', A.x + aw * 0.30, lv - 20 * k, { size: 13 * k, color: C.gold, w: 600 });
-      flow(ctx, [[A.x, lv], [A.x + aw, lv]], 6, S.flowPhase, { r: 3.4 * k });
+      var lv = ay + ah * 0.16;
+      ctx.save();
+      ctx.strokeStyle = K.text; ctx.lineWidth = 2.8 * k;
+      ctx.beginPath(); ctx.moveTo(ax, lv); ctx.lineTo(ax + aw, lv); ctx.stroke();
+      ctx.restore();
+      Z.chargeFlow(ctx, [[ax, lv], [ax + aw, lv]], 6, S.flowPhase, { kind: 'neg', r: 4.2 * k });
     } else {
       ctx.save();
-      ctx.strokeStyle = C.mark; ctx.lineWidth = 2.4 * k;
+      ctx.strokeStyle = K.neg; ctx.lineWidth = 2.6 * k;
       ctx.beginPath();
       for (var i = 0; i <= 60; i++) {
-        var t = i / 60, x = A.x + aw * t, y = mid - Math.sin(t * Math.PI * 4) * ah * 0.36;
+        var t = i / 60, x = ax + aw * t, y = mid - Math.sin(t * Math.PI * 4) * ah * 0.36;
         i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
       }
       ctx.stroke();
       ctx.restore();
-      txt(ctx, '大小、方向都在变', A.x + aw * 0.30, mid - ah * 0.52, { size: 13 * k, color: C.mark, w: 600 });
     }
-    txt(ctx, S.mode === 1 ? '恒定电流（steady current）' : '交变电流', px(b, 0.60), py(b, 0.80),
-      { size: 15 * k, align: 'center', color: S.mode === 1 ? C.gold : C.mark, w: 700 });
-    txt(ctx, '这一章我们研究恒定电流', px(b, 0.60), py(b, 0.88), { size: 12.5 * k, align: 'center', color: C.white });
-    tapRing(ctx, A.x - 14 * k, A.y - 14 * k, aw + 28 * k, ah + 28 * k, { k: k });
   }
 
   /* =====================================================================
-     场景 10 · 定义式 I = q/t（环节④）
+     场景 10 · I = q/t 定义（环节④）
      ===================================================================== */
   function scDefine(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption });
-    var y = py(b, 0.30), x0 = px(b, 0.05), x1 = px(b, 0.95);
-    /* 导体（圆柱示意：两条平行线 + 端面椭圆省略） */
-    seg(ctx, x0, y - 30 * k, x1, y - 30 * k, { color: C.white, w: 3 * k });
-    seg(ctx, x0, y + 30 * k, x1, y + 30 * k, { color: C.white, w: 3 * k });
-    /* 横截面（虚线，垂直于电流方向） */
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: '单位时间内通过横截面的电荷量越多，电流就越大', en: 'Electric current',
+      card: [
+        { label: '形成', text: '电荷的定向移动形成电流' },
+        { label: '定义', text: '电荷量 q 与时间 t 的比值' },
+        { formula: 'I = q / t' },
+        { label: '单位', text: 'C/s ⇒ 安培（A）' }
+      ],
+      rings: [[mx(L, 0.30), my(L, 0.06), (L.mx1 - L.mx0) * 0.14, (L.my1 - L.my0) * 0.62]]
+    });
+    /* 导体：两条白线 + 横截面虚线 */
+    var y = my(L, 0.34), x0 = mx(L, 0.02), x1 = mx(L, 0.98), hh = 46 * k;
+    Z.wirePath(ctx, [[x0, y - hh], [x1, y - hh]], { w: 3 * k });
+    Z.wirePath(ctx, [[x0, y + hh], [x1, y + hh]], { w: 3 * k });
     var xc = (x0 + x1) / 2;
-    seg(ctx, xc, y - 44 * k, xc, y + 44 * k, { color: C.gold, w: 2.4 * k, dash: [7, 5] });
-    txt(ctx, '横截面', xc, y + 58 * k, { size: 12.5 * k, align: 'center', color: C.gold });
-    txt(ctx, 'S', xc + 30 * k, y - 50 * k, { size: 14 * k, color: C.gold });
-    /* 通过的电荷 */
-    flow(ctx, [[x0, y], [x1, y]], 9, S.flowPhase, { r: 4.2 * k, glow: true });
-    arrow(ctx, x0 + 40 * k, y - 52 * k, x0 + 100 * k, y - 52 * k, C.mark, 2 * k);
-    txt(ctx, '电流方向（正电荷定向移动方向）', x0 + 24 * k, y - 68 * k, { size: 12 * k, color: C.mark });
-    tapRing(ctx, xc - 34 * k, y - 54 * k, 68 * k, 108 * k, { k: k });
-    /* 计时条 */
-    var bw = 300 * k, bx0 = px(b, 0.20), by = py(b, 0.70);
-    seg(ctx, bx0, by, bx0 + bw, by, { color: 'rgba(255,255,255,0.45)', w: 2 * k });
-    var f = Math.min(1, S.tdefine / 10);
-    seg(ctx, bx0, by, bx0 + bw * f, by, { color: C.gold, w: 4 * k });
-    txt(ctx, '经过的时间 t = ' + P.fmt(S.tdefine, 1) + ' s', bx0 + bw + 12 * k, by, { size: 12.5 * k, color: C.white });
-    readoutBlock(ctx, px(b, 0.60), py(b, 0.78), 220 * k, [
-      ['电流 I', P.fmt(S.Idefine, 2) + ' A', C.gold],
-      ['时间 t', P.fmt(S.tdefine, 1) + ' s'],
-      ['电荷量 q = It', P.fmt(S.qDefine, 3) + ' C', C.gold],
-      ['经过的电子数', P.sci(S.nDefine, 2) + ' 个']
-    ], { k: k });
+    Z.wirePath(ctx, [[xc, y - hh - 26 * k], [xc, y + hh + 26 * k]], { color: 'rgba(255,255,255,0.7)', w: 2 * k, dash: [7, 5] });
+    Z.T(ctx, '横截面', xc, y - hh - 46 * k, { size: 20 * k, align: 'center', color: K.text });
+    Z.chargeFlow(ctx, [[x0, y], [x1, y]], 9, S.flowPhase, { kind: 'neg', r: 4.8 * k });
+    /* 时间条 */
+    var barY = my(L, 0.80), barW = (L.mx1 - L.mx0) * 0.66;
+    Z.wirePath(ctx, [[x0 + 20 * k, barY], [x0 + 20 * k + barW, barY]], { color: 'rgba(255,255,255,0.28)', w: 4 * k });
+    Z.wirePath(ctx, [[x0 + 20 * k, barY], [x0 + 20 * k + barW * Math.min(1, S.tdefine / 10), barY]], { color: K.neg, w: 4 * k });
+    Z.T(ctx, 't = ' + P.fmt(S.tdefine, 1) + ' s ｜ q = ' + P.fmt(S.qDefine, 3) + ' C',
+      x0 + 20 * k + barW + 24 * k, barY, { size: 20 * k, color: K.text });
   }
 
   /* =====================================================================
-     场景 11 · 单位与教材练习 1（环节④）
+     场景 11 · 单位与练习 1（环节④）
      ===================================================================== */
   function scUnits(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption });
-    /* 单位阶梯 */
-    var lx = px(b, 0.10), ly = py(b, 0.24);
-    var seq = [['1 A', 1], ['1 mA = 10⁻³ A', 0.62], ['1 μA = 10⁻⁶ A', 0.36]];
-    for (var i = 0; i < seq.length; i++) {
-      var yy = ly + i * 52 * k;
-      txt(ctx, seq[i][0], lx, yy, { size: 14 * k, color: i === S.unitIdx ? C.gold : C.white, w: i === S.unitIdx ? 700 : 400 });
-      seg(ctx, lx - 8 * k, yy + 18 * k, lx + 190 * k, yy + 18 * k, { color: 'rgba(255,255,255,0.18)', w: 1 * k });
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: '单位是推出来的：C/s ⇒ 安培（A）', en: 'Ampere',
+      card: [
+        { label: '自推', text: 'I = q/t ⇒ C/s' },
+        { label: '命名', text: '安培（A）' },
+        { formula: '1 C = 1 A·s' },
+        { note: '1 mA = 10⁻³ A' },
+        { note: '1 μA = 10⁻⁶ A' }
+      ],
+      rings: [[mx(L, 0.02), my(L, 0.06), (L.mx1 - L.mx0) * 0.44, (L.my1 - L.my0) * 0.68]]
+    });
+    var lx = mx(L, 0.08), ly = my(L, 0.18);
+    var rows = [['1 A', 'A'], ['1 mA = 10⁻³ A', 'mA'], ['1 μA = 10⁻⁶ A', 'μA']];
+    for (var i = 0; i < rows.length; i++) {
+      var yy = ly + i * 62 * k;
+      var on = i + 1 === S.unitIdx + 1;
+      Z.M(ctx, rows[i][0], lx, yy, { size: 30 * k, color: on ? K.neg : K.text });
     }
-    txt(ctx, '可自推：I = q/t ⇒ C/s ⇒ 安培 A', lx, ly + 3 * 52 * k, { size: 12.5 * k, color: C.cyan });
-    /* 练习 1：50 μA × 3.2 s */
-    var rx = px(b, 0.62);
-    txt(ctx, '教材练习 1', rx, py(b, 0.12), { size: 14 * k, color: C.white, w: 700 });
-    txt(ctx, '一根导线中的电流 50 μA，', rx, py(b, 0.22), { size: 13 * k, color: C.white });
-    txt(ctx, '3.2 s 内通过横截面的电荷量是多少？', rx, py(b, 0.30), { size: 13 * k, color: C.white });
-    txt(ctx, '有多少个电子通过？', rx, py(b, 0.38), { size: 13 * k, color: C.white });
-    mtxt(ctx, 'I = q/t  ⇒  q = It', rx, py(b, 0.50), { size: 15 * k });
-    txt(ctx, 'q = 5.0×10⁻⁵ A × 3.2 s = 1.6×10⁻⁴ C', rx, py(b, 0.60), { size: 13.5 * k, color: C.gold });
-    txt(ctx, 'n = q/e = 1.0×10¹⁵ 个', rx, py(b, 0.69), { size: 13.5 * k, color: C.gold });
-    tapRing(ctx, lx - 20 * k, ly - 26 * k, 230 * k, 190 * k, { k: k });
-    tapRing(ctx, rx - 20 * k, py(b, 0.08), 280 * k, (b.y1 - b.y0) * 0.72, { k: k });
-    readoutBlock(ctx, rx - 20 * k, py(b, 0.78), 250 * k, [
-      ['当前选中单位', ['A', 'mA', 'μA'][S.unitIdx]],
-      ['换算为 A', P.sci(S.Iampere, 2) + ' A']
-    ], { k: k });
+    /* 练习 1 板卡 */
+    var rx = mx(L, 0.56), ry = my(L, 0.16);
+    Z.T(ctx, '教材练习 1', rx, ry, { size: 22 * k, color: K.text });
+    Z.T(ctx, '一根导线中的电流是 50 μA，', rx, ry + 38 * k, { size: 20 * k, color: K.dim });
+    Z.T(ctx, '求 3.2 s 内通过横截面的电荷量，', rx, ry + 72 * k, { size: 20 * k, color: K.dim });
+    Z.T(ctx, '以及通过的电子数。', rx, ry + 106 * k, { size: 20 * k, color: K.dim });
+    Z.M(ctx, 'q = 5.0×10⁻⁵ A × 3.2 s = 1.6×10⁻⁴ C', rx, ry + 162 * k, { size: 26 * k, color: K.text });
+    Z.M(ctx, 'n = q/e = 1.0×10¹⁵ 个', rx, ry + 204 * k, { size: 26 * k, color: K.text });
   }
 
   /* =====================================================================
-     场景 12 · 横截面判据：斜截面 vs 垂直截面（环节④ 易错点①）
+     场景 12 · 横截面判据（环节④ 易错点①）
      ===================================================================== */
   function scCrossSec(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption });
-    var y = py(b, 0.34), x0 = px(b, 0.06), x1 = px(b, 0.60);
-    var xc = (x0 + x1) / 2, halfH = 42 * k;
-    seg(ctx, x0, y - halfH, x1, y - halfH, { color: C.white, w: 3 * k });
-    seg(ctx, x0, y + halfH, x1, y + halfH, { color: C.white, w: 3 * k });
-    flow(ctx, [[x0, y], [x1, y]], 7, S.flowPhase, { r: 4 * k, glow: true });
-    arrow(ctx, x0 + 20 * k, y - halfH - 20 * k, x0 + 72 * k, y - halfH - 20 * k, C.mark, 2 * k);
-    txt(ctx, '电流方向', x0 + 16 * k, y - halfH - 36 * k, { size: 12.5 * k, color: C.mark });
-    /* 斜截面：绕 y 轴倾斜 theta */
-    var th = S.theta * Math.PI / 180;
-    var dx = Math.tan(th) * halfH * 1.6;
-    var topX = xc + dx, botX = xc - dx;
-    var col = S.isCross ? C.gold : C.mark;
-    seg(ctx, topX, y - halfH * 0.72, botX, y + halfH * 0.72, { color: col, w: 2.6 * k });
-    /* 投影（垂直截面，虚线） */
-    seg(ctx, xc, y - halfH * 0.72, xc, y + halfH * 0.72, { color: 'rgba(255,255,255,0.55)', w: 1.6 * k, dash: [6, 5] });
-    if (Math.abs(dx) > 12 * k) {
-      seg(ctx, topX, y - halfH * 0.72, xc, y - halfH * 0.72, { color: 'rgba(255,255,255,0.35)', w: 1.2 * k, dash: [4, 4] });
-      seg(ctx, botX, y + halfH * 0.72, xc, y + halfH * 0.72, { color: 'rgba(255,255,255,0.35)', w: 1.2 * k, dash: [4, 4] });
-    }
-    txt(ctx, S.isCross ? '这就是横截面（θ = 0°）' : '斜截面（θ = ' + S.theta.toFixed(0) + '°）', xc + 8 * k, y - halfH - 36 * k,
-      { size: 13 * k, color: col, w: 600 });
-    tapRing(ctx, xc - 56 * k, y - halfH * 0.86, 112 * k, halfH * 1.72, { k: k, color: 'rgba(5,232,253,0.32)' });
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: S.isCross ? '垂直截面才是横截面（θ = 0°）' : '斜截面不是横截面：只有投影"数得到"电荷',
+      en: 'Cross section',
+      card: [
+        { label: '判据', text: '必须垂直于电流方向' },
+        { label: '不是', text: '与"是不是圆的"无关' },
+        { formula: 'S有效 = S·cosθ' },
+        { note: 'θ = ' + P.fmt(S.theta, 0) + '° ⇒ cosθ = ' + P.fmt(S.cosT, 3) }
+      ],
+      rings: [[mx(L, 0.02), my(L, 0.02), (L.mx1 - L.mx0) * 0.96, (L.my1 - L.my0) * 0.6]]
+    });
+    var y = my(L, 0.32), x0 = mx(L, 0.02), x1 = mx(L, 0.98), hh = 52 * k;
+    Z.wirePath(ctx, [[x0, y - hh], [x1, y - hh]], { w: 3 * k });
+    Z.wirePath(ctx, [[x0, y + hh], [x1, y + hh]], { w: 3 * k });
+    Z.chargeFlow(ctx, [[x0, y], [x1, y]], 8, S.flowPhase, { kind: 'neg', r: 4.6 * k });
+    var xc = (x0 + x1) / 2, th = S.theta * Math.PI / 180;
+    var dx = Math.tan(th) * hh * 0.85;
+    var col = S.isCross ? K.text : K.neg;
+    Z.wirePath(ctx, [[xc + dx, y - hh * 0.78], [xc - dx, y + hh * 0.78]], { color: col, w: 2.8 * k });
+    Z.wirePath(ctx, [[xc, y - hh * 0.78], [xc, y + hh * 0.78]], { color: 'rgba(255,255,255,0.5)', w: 1.6 * k, dash: [6, 5] });
+    Z.T(ctx, S.isCross ? '垂直截面（横截面）' : '斜截面 θ = ' + P.fmt(S.theta, 0) + '°',
+      xc, y + hh + 40 * k, { size: 21 * k, align: 'center', color: col });
     /* 有效面积柱 */
-    var bx0 = px(b, 0.66), by0 = py(b, 0.16), bw = 34 * k, bh = 150 * k;
-    seg(ctx, bx0, by0, bx0, by0 + bh, { color: 'rgba(255,255,255,0.5)', w: 1.4 * k });
-    seg(ctx, bx0, by0 + bh, bx0 + bw, by0 + bh, { color: 'rgba(255,255,255,0.5)', w: 1.4 * k });
+    var bx = mx(L, 0.76), by = my(L, 0.12), bw = 40 * k, bh = (L.my1 - L.my0) * 0.52;
     ctx.save();
-    ctx.fillStyle = S.isCross ? 'rgba(240,172,95,0.35)' : 'rgba(252,98,85,0.30)';
-    ctx.fillRect(bx0, by0 + bh * (1 - S.cosT), bw, bh * S.cosT);
-    ctx.strokeStyle = col; ctx.lineWidth = 2 * k;
-    ctx.strokeRect(bx0, by0 + bh * (1 - S.cosT), bw, bh * S.cosT);
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1.4 * k;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle = S.isCross ? 'rgba(255,255,255,0.22)' : 'rgba(46,159,208,0.34)';
+    ctx.fillRect(bx, by + bh * (1 - S.cosT), bw, bh * S.cosT);
     ctx.restore();
-    txt(ctx, '数得到的面积 S·cosθ', bx0 + bw / 2, by0 - 16 * k, { size: 12.5 * k, align: 'center', color: col });
-    readoutBlock(ctx, px(b, 0.66), py(b, 0.78), 230 * k, [
-      ['夹角 θ', S.theta.toFixed(0) + '°'],
-      ['有效占比 cosθ', P.fmt(S.cosT, 3), col],
-      ['是否是横截面', S.isCross ? '是' : '不是', col]
-    ], { k: k });
+    Z.T(ctx, '数得到的面积', bx + bw / 2, by - 22 * k, { size: 19 * k, align: 'center', color: K.dim });
   }
 
   /* =====================================================================
-     场景 13 · 正负离子同时移动（环节④ 易错点②）
+     场景 13 · 正负离子：等效不是抵消（环节④ 易错点②）
      ===================================================================== */
   function scElectrolyte(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption });
-    var x0 = px(b, 0.05), x1 = px(b, 0.95), y = py(b, 0.34), hh = 56 * k;
-    K.metalBox(ctx, x0, y - hh, x1 - x0, hh * 2, { color: C.white, w: 2.4 * k });
-    txt(ctx, '电解液', x0 + 12 * k, y - hh + 16 * k, { size: 12.5 * k, color: C.grey });
-    /* 电极 */
-    K.chargeDot(ctx, x0 + 4 * k, y, 8 * k, 'neg', { ring: false });
-    K.chargeDot(ctx, x1 - 4 * k, y, 8 * k, 'pos', { ring: false });
-    txt(ctx, '负极', x0 + 4 * k, y + hh + 18 * k, { size: 12.5 * k, align: 'center', color: C.neg });
-    txt(ctx, '正极', x1 - 4 * k, y + hh + 18 * k, { size: 12.5 * k, align: 'center', color: C.pos });
-    flowPos(ctx, [[x0 + 14 * k, y - 22 * k], [x1 - 14 * k, y - 22 * k]], 5, S.flowPhase, { r: 4 * k, glow: true });
-    flow(ctx, [[x1 - 14 * k, y + 22 * k], [x0 + 14 * k, y + 22 * k]], 5, 1 - S.flowPhase, { r: 4 * k });
-    txt(ctx, '正离子 →', (x0 + x1) / 2, y - 40 * k, { size: 12.5 * k, align: 'center', color: C.pos });
-    txt(ctx, '← 负离子', (x0 + x1) / 2, y + 44 * k, { size: 12.5 * k, align: 'center', color: C.neg });
-    arrow(ctx, (x0 + x1) / 2 - 70 * k, y + hh + 44 * k, (x0 + x1) / 2 + 70 * k, y + hh + 44 * k, C.gold, 2.4 * k);
-    txt(ctx, '电流方向（两者等效，方向相同）', (x0 + x1) / 2, y + hh + 64 * k, { size: 12.5 * k, align: 'center', color: C.gold });
-    txt(ctx, S.elecEquiv ? '说法：等效 ⇒ q = |q₁| + |q₂|（相加）' : '说法：抵消 ⇒ 会算出"电流为零"（错）',
-      (x0 + x1) / 2, y - hh - 22 * k, { size: 13 * k, align: 'center', color: S.elecEquiv ? C.gold : C.mark, w: 600 });
-    tapRing(ctx, x0 + 10 * k, y - hh - 12 * k, (x1 - x0) - 20 * k, hh * 2 + 24 * k, { k: k });
-    readoutBlock(ctx, px(b, 0.62), py(b, 0.06), 230 * k, [
-      ['正离子 q₁', P.fmt(S.q1, 2) + ' C', C.pos],
-      ['负离子 |q₂|', P.fmt(S.q2, 2) + ' C', C.neg],
-      ['合计 q = q₁+|q₂|', P.fmt(S.qsum, 2) + ' C', C.gold]
-    ], { k: k });
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: S.elecEquiv ? '等效：q = |q₁| + |q₂|（相加）' : '抵消：会算出"电流为零"（错）',
+      en: 'Equivalent, not cancel',
+      card: S.elecEquiv ? [
+        { label: '正离子', text: '向右运动' },
+        { label: '负离子', text: '向左运动', color: K.neg },
+        { label: '结果', text: '两者形成的电流方向相同' },
+        { formula: 'q = |q₁| + |q₂|' }
+      ] : [
+        { label: '若相消', text: '电解液通电时电流为零', color: K.neg },
+        { note: '可电解液明明在导电 ⇒ 不能相消' }
+      ],
+      rings: [[mx(L, 0.02), my(L, 0.06), (L.mx1 - L.mx0) * 0.96, (L.my1 - L.my0) * 0.6]]
+    });
+    var x0 = mx(L, 0.04), x1 = mx(L, 0.96), y = my(L, 0.34), hh = 62 * k;
+    Z.wirePath(ctx, [[x0, y - hh], [x1, y - hh], [x1, y + hh], [x0, y + hh], [x0, y - hh]], { w: 2.6 * k });
+    Z.chargeFlow(ctx, [[x0 + 20 * k, y - 30 * k], [x1 - 20 * k, y - 30 * k]], 5, S.flowPhase, { kind: 'pos', r: 5 * k, glow: false });
+    Z.chargeFlow(ctx, [[x1 - 20 * k, y + 30 * k], [x0 + 20 * k, y + 30 * k]], 5, 1 - S.flowPhase, { kind: 'neg', r: 5 * k });
+    Z.T(ctx, '正离子 →', (x0 + x1) / 2, y - hh - 26 * k, { size: 20 * k, align: 'center', color: K.text });
+    Z.T(ctx, '← 负离子', (x0 + x1) / 2, y + hh + 28 * k, { size: 20 * k, align: 'center', color: K.neg });
   }
 
   /* =====================================================================
-     场景 14 · I = neSv 的四步推导链（环节⑤）
+     场景 14 · I = neSv 四步链（环节⑤）
      ===================================================================== */
   function scMicro(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption });
-    var y = py(b, 0.30), x0 = px(b, 0.06), xRight = px(b, 0.98), xEnd = px(b, 0.72);
-    var halfH = 40 * k;
-    /* 导体全长（灰） */
-    seg(ctx, x0, y - halfH, xRight, y - halfH, { color: 'rgba(255,255,255,0.35)', w: 2.6 * k });
-    seg(ctx, x0, y + halfH, xRight, y + halfH, { color: 'rgba(255,255,255,0.35)', w: 2.6 * k });
-    /* 电子柱 vt：从右端向左延伸，长度 ∝ t */
-    var xL = xRight - (xRight - xEnd) * Math.max(0.02, S.tFrac);
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: 'vt → Svt → nSvt → neSvt ⇒ I = neSv', en: 'Microscopic expression',
+      card: [
+        { label: 'vt', text: '导体的长度', color: S.chainOn > 0 ? K.text : K.dim },
+        { label: 'Svt', text: '导体的体积', color: S.chainOn > 1 ? K.text : K.dim },
+        { label: 'nSvt', text: '自由电子总数', color: S.chainOn > 2 ? K.text : K.dim },
+        { label: 'neSvt', text: '总电荷量', color: S.chainOn > 3 ? K.text : K.dim },
+        { formula: 'I = neSv' }
+      ],
+      rings: [[mx(L, 0.02), my(L, 0.10), (L.mx1 - L.mx0) * 0.96, (L.my1 - L.my0) * 0.5]]
+    });
+    var y = my(L, 0.34), xr = mx(L, 0.96), xe = mx(L, 0.60), hh = 48 * k, x0 = mx(L, 0.02);
+    Z.wirePath(ctx, [[x0, y - hh], [xr, y - hh]], { w: 3 * k });
+    Z.wirePath(ctx, [[x0, y + hh], [xr, y + hh]], { w: 3 * k });
+    var xL = xr - (xr - xe) * Math.max(0.04, S.tFrac);
     ctx.save();
-    ctx.fillStyle = 'rgba(240,172,95,0.18)';
-    ctx.fillRect(xL, y - halfH, xEnd - xL, halfH * 2);
-    ctx.strokeStyle = C.gold; ctx.lineWidth = 2.4 * k;
-    ctx.strokeRect(xL, y - halfH, xEnd - xL, halfH * 2);
+    ctx.fillStyle = 'rgba(46,159,208,0.14)';
+    ctx.fillRect(xL, y - hh, xe - xL, hh * 2);
     ctx.restore();
-    seg(ctx, xEnd, y - halfH - 12 * k, xEnd, y + halfH + 12 * k, { color: C.gold, w: 2 * k });
-    var nx = (xL + xEnd) / 2;
-    txt(ctx, 'vt', nx, y, { size: 15 * k, align: 'center', color: C.gold, w: 700 });
-    txt(ctx, '左端横截面', xEnd, y - halfH - 26 * k, { size: 12 * k, align: 'center', color: C.grey });
-    /* 电子点阵 */
-    for (var i = 0; i < 4; i++) for (var j = 0; j < 3; j++) {
-      var xx = xL + (xEnd - xL) * (i + 0.5) / 4, yy = y - halfH * 0.6 + j * halfH * 0.6;
-      K.chargeDot(ctx, xx, yy, 3.4 * k, 'neg', { ring: false });
+    Z.wirePath(ctx, [[xe, y - hh - 16 * k], [xe, y + hh + 16 * k]], { color: K.neg, w: 2.2 * k });
+    Z.M(ctx, 'vt', (xL + xe) / 2, y, { size: 30 * k, color: K.text });
+    for (var i = 0; i < 5; i++) for (var j = 0; j < 3; j++) {
+      Z.charge(ctx, xL + (xe - xL) * (i + 0.5) / 5, y - hh * 0.55 + j * hh * 0.55, 3.8 * k, 'neg', {});
     }
-    /* 四步链 */
-    var cx = px(b, 0.78), cy = py(b, 0.14);
-    var rows = [['vt', '导体的长度'], ['Svt', '导体的体积'], ['nSvt', '自由电子总数'], ['neSvt', '总电荷量']];
-    for (var m = 0; m < rows.length; m++) {
-      var on = S.chainOn > m;
-      txt(ctx, rows[m][0], cx, cy + m * 40 * k, { size: 15 * k, color: on ? C.gold : 'rgba(255,255,255,0.35)', w: on ? 700 : 400 });
-      txt(ctx, rows[m][1], cx + 62 * k, cy + m * 40 * k, { size: 12.5 * k, color: on ? C.white : 'rgba(255,255,255,0.35)' });
-    }
-    mtxt(ctx, 'I = neSv', px(b, 0.66), py(b, 0.90), { size: 20 * k });
-    txt(ctx, 'n 是单位体积内的自由电子数', px(b, 0.66) + 92 * k, py(b, 0.90), { size: 12.5 * k, color: C.grey });
-    tapRing(ctx, xL - 6 * k, y - halfH - 8 * k, (xEnd - xL) + 12 * k, halfH * 2 + 16 * k, { k: k });
+    Z.T(ctx, '左端横截面', xe, y - hh - 36 * k, { size: 19 * k, align: 'center', color: K.dim });
   }
 
   /* =====================================================================
-     场景 15 · 定量算例：铜导线中电子跑多慢（环节⑤）
+     场景 15 · 铜导线里的电子跑多慢（环节⑤）
      ===================================================================== */
   function scDriftNum(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption, grid: true });
-    var y = py(b, 0.30), x0 = px(b, 0.05), x1 = px(b, 0.95);
-    seg(ctx, x0, y - 36 * k, x1, y - 36 * k, { color: C.white, w: 3 * k });
-    seg(ctx, x0, y + 36 * k, x1, y + 36 * k, { color: C.white, w: 3 * k });
-    txt(ctx, '铜导线   S = 1 mm²', (x0 + x1) / 2, y - 56 * k, { size: 13 * k, align: 'center', color: C.white });
-    /* 缓慢爬行的电子 */
-    var nE = 6;
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: '定向速率只有 10⁻⁵ m/s 量级，穿过 1 m 要几个小时', en: 'Drift speed',
+      card: [
+        { label: '数密度', text: 'n = ρN_A/M ≈ 8.4×10²⁸ m⁻³' },
+        { formula: 'v = I / (neS)' },
+        { note: 'I = ' + P.fmt(S.Idrift, 1) + ' A，S = 1 mm²' },
+        { note: 'v = ' + P.sci(S.vDrift, 2) + ' m/s', color: K.text },
+        { note: '穿 1 m 需 ' + P.fmt(S.tTransit / 3600, 2) + ' 小时', color: K.neg }
+      ],
+      rings: [[mx(L, 0.02), my(L, 0.10), (L.mx1 - L.mx0) * 0.96, (L.my1 - L.my0) * 0.42]]
+    });
+    var y = my(L, 0.32), x0 = mx(L, 0.02), x1 = mx(L, 0.98), hh = 46 * k;
+    Z.wirePath(ctx, [[x0, y - hh], [x1, y - hh]], { w: 3 * k });
+    Z.wirePath(ctx, [[x0, y + hh], [x1, y + hh]], { w: 3 * k });
+    Z.T(ctx, '铜导线   S = 1 mm²', (x0 + x1) / 2, y - hh - 34 * k, { size: 21 * k, align: 'center', color: K.text });
+    var nE = 7;
     for (var i = 0; i < nE; i++) {
       var tt = ((i / nE) + S.slowPhase) % 1;
-      K.chargeDot(ctx, x0 + (x1 - x0) * tt, y, 4.4 * k, 'neg', { ring: false, glow: i === 0 });
+      Z.charge(ctx, x0 + (x1 - x0) * tt, y, 5 * k, 'neg', { glow: i === 0 });
     }
-    arrow(ctx, x0 + 30 * k, y - 16 * k, x0 + 78 * k, y - 16 * k, C.mark, 2 * k);
-    txt(ctx, 'v = ' + P.sci(S.vDrift, 2) + ' m/s', x0 + 26 * k, y - 34 * k, { size: 13 * k, color: C.gold, w: 600 });
-    tapRing(ctx, x0 - 12 * k, y - 50 * k, (x1 - x0) + 24 * k, 100 * k, { k: k });
-    tapRing(ctx, px(b, 0.56), py(b, 0.48), 290 * k, (b.y1 - b.y0) * 0.34, { k: k });
-    readoutBlock(ctx, px(b, 0.58), py(b, 0.52), 250 * k, [
-      ['电流 I', P.fmt(S.Idrift, 1) + ' A', C.gold],
-      ['横截面积 S', '1.0 mm² = 1.0×10⁻⁶ m²'],
-      ['电子数密度 n', P.sci(S.nCu, 2) + ' m⁻³'],
-      ['定向速率 v = I/(neS)', P.sci(S.vDrift, 2) + ' m/s', C.gold],
-      ['穿过 1 m 需时', P.fmt(S.tTransit / 3600, 2) + ' 小时', C.mark]
-    ], { k: k });
+    Z.T(ctx, 'v = ' + P.sci(S.vDrift, 2) + ' m/s', (x0 + x1) / 2, y + hh + 40 * k,
+      { size: 22 * k, align: 'center', color: K.text });
   }
 
   /* =====================================================================
-     场景 16 · 灯为什么立刻亮：电场以光速建立（环节⑤）
+     场景 16 · 灯为什么立刻亮（环节⑤ + 回收卡片）
      ===================================================================== */
   function scLightSpeed(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption });
-    var x0 = px(b, 0.05), x1 = px(b, 0.95), y = py(b, 0.34);
-    seg(ctx, x0, y, x1, y, { color: C.white, w: 3 * k });
-    K.batterySymbol(ctx, x0 + 6 * k, y, { color: C.orange, w: 3.4 * k });
-    lamp(ctx, x1 - 24 * k, y, 15 * k, { on: true, w: 2 * k });
-    txt(ctx, '开关一合，灯就亮', (x0 + x1) / 2, y - 34 * k, { size: 13 * k, align: 'center', color: C.gold, w: 600 });
-    /* 两条时间条（对数刻度） */
-    var ty1 = py(b, 0.58), ty2 = py(b, 0.74), bw = 320 * k, bx0 = px(b, 0.10);
-    var lg = function (t) { return (Math.log(t) - Math.log(1e-10)) / (Math.log(10) - Math.log(1e-10)); };
-    txt(ctx, '电场建立 t = L/c', bx0, ty1 - 16 * k, { size: 12.5 * k, color: C.cyan });
-    seg(ctx, bx0, ty1, bx0 + bw, ty1, { color: 'rgba(255,255,255,0.3)', w: 3 * k });
-    seg(ctx, bx0, ty1, bx0 + bw * lg(S.tField), ty1, { color: C.cyan, w: 4 * k });
-    txt(ctx, P.sci(S.tField, 1) + ' s', bx0 + bw + 10 * k, ty1, { size: 12.5 * k, color: C.cyan });
-    txt(ctx, '电子跑完全程 t = L/v', bx0, ty2 - 16 * k, { size: 12.5 * k, color: C.gold });
-    seg(ctx, bx0, ty2, bx0 + bw, ty2, { color: 'rgba(255,255,255,0.3)', w: 3 * k });
-    seg(ctx, bx0, ty2, bx0 + bw * lg(S.tTransit), ty2, { color: C.gold, w: 4 * k });
-    txt(ctx, P.fmt(S.tTransit / 3600, 2) + ' 小时', bx0 + bw + 10 * k, ty2, { size: 12.5 * k, color: C.gold });
-    txt(ctx, '对数时间轴（10⁻¹⁰ s → 10 s）', bx0, py(b, 0.90), { size: 12 * k, color: C.grey });
-    txt(ctx, '“电流传得快”是电场建立得快，不是电子跑得快', px(b, 0.62), py(b, 0.06),
-      { size: 13.5 * k, align: 'center', color: C.gold, w: 600 });
-    tapRing(ctx, x0 - 14 * k, y - 30 * k, (x1 - x0) + 28 * k, 60 * k, { k: k });
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: '开关一合灯就亮：是电场建立得快，不是电子跑得快', en: 'Field propagates at c',
+      card: [
+        { label: '电场', text: '以光速 3×10⁸ m/s 建立' },
+        { label: '电子', text: '各处几乎同时开始定向移动', color: K.neg },
+        { formula: 'L/c = ' + P.sci(S.tField, 2) + ' s' },
+        { note: '电子跑完 L/v = ' + P.fmt(S.tTransit / 3600, 2) + ' 小时' },
+        { note: '两者相差 ' + P.sci(S.tTransit / S.tField, 1) + ' 倍' }
+      ],
+      rings: [[mx(L, 0.02), my(L, 0.06), (L.mx1 - L.mx0) * 0.96, (L.my1 - L.my0) * 0.30]]
+    });
+    var x0 = mx(L, 0.04), x1 = mx(L, 0.96), y = my(L, 0.20);
+    Z.wirePath(ctx, [[x0, y], [x1, y]], { w: 3 * k });
+    Z.battery(ctx, x0 + 56 * k, y, 84 * k, 32 * k, { k: k });
+    Z.chargeFlow(ctx, [[x0 + 100 * k, y], [x1 - 60 * k, y]], 8, S.flowPhase, { kind: 'neg', r: 4.4 * k });
+    Z.T(ctx, '导线长 L = ' + P.fmt(S.Lwire, 0) + ' m', (x0 + x1) / 2, y + 52 * k,
+      { size: 20 * k, align: 'center', color: K.dim });
   }
 
   /* =====================================================================
-     场景 17 · STSE：电池容量就是电荷量（环节⑥）
+     场景 17 · 电池容量就是电荷量（环节⑥）
      ===================================================================== */
   function scCapacity(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption, grid: true });
-    var cx = px(b, 0.16), cy = py(b, 0.34);
-    /* 电池组 */
-    ctx.save();
-    ctx.fillStyle = 'rgba(248,128,8,0.14)';
-    ctx.fillRect(cx - 46 * k, cy - 70 * k, 92 * k, 140 * k);
-    ctx.strokeStyle = C.orange; ctx.lineWidth = 2.4 * k;
-    ctx.strokeRect(cx - 46 * k, cy - 70 * k, 92 * k, 140 * k);
-    ctx.restore();
-    txt(ctx, '动力电池组', cx, cy - 84 * k, { size: 12.5 * k, align: 'center', color: C.orange });
-    txt(ctx, P.fmt(S.capAh, 0) + ' A·h', cx, cy, { size: 17 * k, align: 'center', color: C.gold, w: 700 });
+    var k = Z.sc(H), L = layout(W, H, {});
+    shell(ctx, W, H, S, L, {
+      cn: '容量就是电池能输出的总电荷量 q', en: 'Battery capacity',
+      card: [
+        { label: '容量', text: P.fmt(S.capAh, 0) + ' A·h = ' + P.sci(S.capC, 3) + ' C' },
+        { label: '单位', text: '1 A·h = 3600 C' },
+        { formula: 'I = q / t' },
+        { note: '放电 ' + P.fmt(S.capT, 1) + ' h ⇒ I = ' + P.fmt(S.Icap, 2) + ' A' },
+        { note: '续航 s = vt = ' + P.fmt(S.rangeKm, 0) + ' km', color: K.text }
+      ],
+      rings: [[mx(L, 0.02), my(L, 0.06), (L.mx1 - L.mx0) * 0.42, (L.my1 - L.my0) * 0.36]]
+    });
+    /* 电池块 */
+    var bx = mx(L, 0.20), by = my(L, 0.24);
+    Z.battery(ctx, bx, by, (L.mx1 - L.mx0) * 0.30, 56 * k, { k: k });
+    Z.T(ctx, '动力电池组', bx, by - 56 * k, { size: 21 * k, align: 'center', color: K.text });
     /* 电量条 */
-    var barW = 150 * k, barX = px(b, 0.40), barY = py(b, 0.20);
-    seg(ctx, barX, barY, barX + barW, barY, { color: 'rgba(255,255,255,0.3)', w: 8 * k });
-    seg(ctx, barX, barY, barX + barW * S.soc, barY, { color: C.gold, w: 8 * k });
-    txt(ctx, '放电进度', barX, barY - 18 * k, { size: 12.5 * k, color: C.grey });
-    /* 车 + 里程 */
-    var vx = px(b, 0.42), vy = py(b, 0.58);
-    ctx.save();
-    ctx.strokeStyle = C.white; ctx.lineWidth = 2 * k;
-    ctx.beginPath();
-    ctx.moveTo(vx, vy); ctx.lineTo(vx + 90 * k, vy);
-    ctx.lineTo(vx + 78 * k, vy - 26 * k); ctx.lineTo(vx + 18 * k, vy - 26 * k);
-    ctx.closePath(); ctx.stroke();
-    ctx.beginPath(); ctx.arc(vx + 20 * k, vy + 8 * k, 8 * k, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(vx + 68 * k, vy + 8 * k, 8 * k, 0, Math.PI * 2); ctx.stroke();
+    var bw = (L.mx1 - L.mx0) * 0.34, barX = mx(L, 0.56), barY = my(L, 0.20);
+    Z.wirePath(ctx, [[barX, barY], [barX + bw, barY]], { color: 'rgba(255,255,255,0.28)', w: 8 * k });
+    Z.wirePath(ctx, [[barX, barY], [barX + bw * S.soc, barY]], { color: K.neg, w: 8 * k });
+    Z.T(ctx, '放电进度', barX, barY - 26 * k, { size: 19 * k, color: K.dim });
+    /* 车 */
+    var vx = mx(L, 0.20), vy = my(L, 0.62);
+    Z.wirePath(ctx, [[vx, vy], [vx + 96 * k, vy], [vx + 84 * k, vy - 28 * k], [vx + 20 * k, vy - 28 * k], [vx, vy]], { w: 2.6 * k });
+    ctx.save(); ctx.strokeStyle = K.text; ctx.lineWidth = 2.4 * k;
+    ctx.beginPath(); ctx.arc(vx + 22 * k, vy + 8 * k, 9 * k, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(vx + 72 * k, vy + 8 * k, 9 * k, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
-    txt(ctx, '续航 ' + P.fmt(S.rangeKm, 0) + ' km', vx + 106 * k, vy - 10 * k, { size: 14 * k, color: C.gold, w: 700 });
-    tapRing(ctx, cx - 56 * k, cy - 80 * k, 112 * k, 160 * k, { k: k });
-    tapRing(ctx, barX - 12 * k, barY - 26 * k, barW + 24 * k, 52 * k, { k: k });
-    tapRing(ctx, vx - 14 * k, vy - 40 * k, 190 * k, 76 * k, { k: k });
-    readoutBlock(ctx, px(b, 0.60), py(b, 0.72), 250 * k, [
-      ['容量 q', P.sci(S.capC, 3) + ' C', C.gold],
-      ['放电时间 t', P.fmt(S.capT, 1) + ' h'],
-      ['电流 I = q/t', P.fmt(S.Icap, 2) + ' A', C.gold],
-      ['车速 v', P.fmt(S.kmh, 0) + ' km/h'],
-      ['续航 s = v·t', P.fmt(S.rangeKm, 0) + ' km', C.gold]
-    ], { k: k });
+    Z.T(ctx, '续航 ' + P.fmt(S.rangeKm, 0) + ' km', vx + 116 * k, vy - 12 * k, { size: 22 * k, color: K.text });
   }
 
   /* =====================================================================
-     场景 18 · 因果链五格收束（环节⑦）
+     场景 18 · 因果链五格（环节⑦）
      ===================================================================== */
   function scChain(ctx, W, H, S) {
-    var k = sc(H), b = bx(W, H, { l: 0.36, r: 0.955 });
-    frame(ctx, W, H, S, { bullets: S.bullets, caption: S.caption });
+    var k = Z.sc(H), L = layout(W, H, { card: false });
+    shell(ctx, W, H, S, L, {
+      cn: '一条因果链把全课串起来', en: 'Summary',
+      legend: false,
+      rings: [[mx(L, 0), my(L, 0), (L.mx1 - L.mx0), (L.my1 - L.my0)]]
+    });
     var items = ['电源搬运电荷', '两极电势差不变', '导体内部恒定电场', '定向移动＋碰撞', '恒定电流'];
-    var n = items.length, y0 = py(b, 0.10), h = (b.y1 - b.y0) * 0.19;
-    for (var i = 0; i < n; i++) {
-      var on = S.chainP > i;
-      var y = y0 + i * (h + 14 * k);
+    var x0 = mx(L, 0.06), bw = (L.mx1 - L.mx0) * 0.88, bh = (L.my1 - L.my0) * 0.155;
+    for (var i = 0; i < items.length; i++) {
+      var on = S.chainP > i, y = my(L, 0) + i * (bh + 14 * k);
       ctx.save();
-      ctx.fillStyle = on ? 'rgba(240,172,95,0.14)' : 'rgba(255,255,255,0.04)';
-      ctx.fillRect(b.x0 + 10 * k, y, b.x1 - b.x0 - 20 * k, h);
-      ctx.strokeStyle = on ? C.gold : 'rgba(255,255,255,0.25)';
-      ctx.lineWidth = on ? 2.2 * k : 1.4 * k;
-      ctx.strokeRect(b.x0 + 10 * k, y, b.x1 - b.x0 - 20 * k, h);
+      ctx.strokeStyle = on ? K.neg : 'rgba(255,255,255,0.22)';
+      ctx.lineWidth = on ? 2.4 * k : 1.4 * k;
+      ctx.strokeRect(x0, y, bw, bh);
       ctx.restore();
-      txt(ctx, String(i + 1), b.x0 + 40 * k, y + h / 2, { size: 18 * k, align: 'center', color: on ? C.gold : 'rgba(255,255,255,0.4)', w: 700 });
-      txt(ctx, items[i], b.x0 + 72 * k, y + h / 2, { size: 16 * k, color: on ? C.white : 'rgba(255,255,255,0.45)', w: on ? 600 : 400 });
-      if (i < n - 1) arrow(ctx, b.x0 + 24 * k, y + h + 2 * k, b.x0 + 24 * k, y + h + 12 * k, on ? C.gold : 'rgba(255,255,255,0.3)', 1.8 * k);
+      Z.T(ctx, String(i + 1), x0 + 34 * k, y + bh / 2, { size: 26 * k, align: 'center', color: on ? K.neg : 'rgba(255,255,255,0.35)' });
+      Z.T(ctx, items[i], x0 + 68 * k, y + bh / 2, { size: 26 * k, color: on ? K.text : 'rgba(255,255,255,0.4)' });
     }
-    txt(ctx, 'I = q/t 定量描述它的强弱', px(b, 0.86), py(b, 0.02), { size: 13 * k, color: C.gold, w: 600 });
   }
 
   var SCENES = {
     intro: scIntro, transient: scTransient, source: scSource, pump: scPump,
-    field: scField, flow: scFlow, ammeter: scAmmeter, sawtooth: scSawtooth,
+    field: scField, flow: scFlow, sawtooth: scSawtooth, ammeter: scAmmeter,
     steady: scSteady, define: scDefine, units: scUnits, crosssec: scCrossSec,
     electrolyte: scElectrolyte, micro: scMicro, driftnum: scDriftNum,
     lightspeed: scLightSpeed, capacity: scCapacity, chain: scChain
   };
 
   global.DCREND = {
-    SCENES: SCENES, frame: frame, sc: sc, txt: txt, mtxt: mtxt, seg: seg, arrow: arrow,
-    readoutBlock: readoutBlock, flow: flow, flowPos: flowPos, lamp: lamp, ammeter: ammeter,
-    cell: cell, fitCanvas: function (cv, ctx) { return K.fitCanvas(cv, ctx); },
-    makeCam: K.makeCam
+    SCENES: SCENES, layout: layout, mx: mx, my: my, shell: shell, tapRing: tapRing,
+    fitCanvas: function (cv, ctx) {
+      var dpr = Math.min(2, global.devicePixelRatio || 1);
+      var r = cv.getBoundingClientRect();
+      var W = Math.max(320, Math.round(r.width)), H = Math.max(200, Math.round(r.height));
+      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return { W: W, H: H, dpr: dpr };
+    }
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 <script>/* =====================================================================
-   viz_dc_hotspots.js —— 11.1 电源和电流 · 可点层（画布热区 + 点击响应）
+   viz_dc_hotspots.js —— 11.1 可点层（画布热区 + 按钮带）
 
-   设计依据（总控设计）：
-     · 论文版 §二 第 2 层「先问后命名」——步 4 的「装置 P」方框可点：点开前只写功能、
-       点开后揭示「这就是电源」（D2：必须用"搬运"这个词）
-     · 论文版 §二 第 1 层 / 第 4 层——[外05] 卡片「离正极近的灯先亮」可点投票，
-       留到步 18 才给答案（D1）
-     · 论文版 D4——步 12 前先做「为什么用电荷量而不是粒子数」的可点辩驳
-     · 论文版 D5——步 14 提供「垂直/斜切」两个可点判据按钮
-     · 论文版 D6——步 15 提供「等效 / 抵消」两个可点选项，点错给出反例
+   画面已按参考片 BV1fnxdziE14 的语汇重做（块体元件 / 发光电荷 / 概念卡），
+   热区坐标随之对齐；每条热区对应教案里的一个教学动作。
+
+   依据（总控设计）：
+     · 论文版 §二 第 2 层「先问后命名」——装置 P 可点，点开才揭示"这就是电源"（D2）
+     · 论文版 第 1 层 / 第 4 层——[外05] 卡片「离正极近的灯先亮」可点投票，步 16 才收（D1）
+     · 论文版 D4——步 12 前先做「为什么用电荷量定义」的可点辩驳
+     · 论文版 D5——步 14「垂直 / 斜切」两个可点判据
+     · 论文版 D6——步 15「等效 / 抵消」可点切换，点错给反例
      · 对比表 C1——步 15 可点「为什么规定正电荷方向」
      · 对比表 C2——步 12 可点「是不是比值定义」，点开后断开序列
-     · 教学分析报告 §5.5 三处冲突——步 7 可点两栏，看冲突怎么解
 
-   协议：HOTSPOTS[scene] = [ {id,label,x,y,w,h,act,once} ]，坐标是**画布归一化**（0–1）。
-        act(id, ctx) 由 app 执行，可改状态 / 切步骤 / 弹说明。
+   协议：{id,label,x,y,w,h,act}，坐标为**画布归一化**（0–1）。
    ===================================================================== */
 (function (global) {
   'use strict';
 
-  /* 通用：坐标以画布宽高比例给出，缩放时自动跟随 */
   function rect(x, y, w, h, label, act, o) {
     o = o || {};
-    return { x: x, y: y, w: w, h: h, label: label, act: act, once: !!o.once, kind: o.kind || 'hot', note: o.note || '' };
+    return { x: x, y: y, w: w, h: h, label: label, act: act, kind: o.kind || 'poke', note: o.note || '' };
   }
 
   var HOTSPOTS = {
-    /* 幕一 · 引入 */
     intro: [
-      rect(0.345, 0.30, 0.11, 0.30, '火花放电', 'spark', { kind: 'poke', note: '点它：摇动起电机 → 火花闪一次' }),
-      rect(0.60, 0.24, 0.20, 0.48, '小灯泡电路', 'lamp', { kind: 'poke', note: '点它：小灯泡一直亮着，电流没有断' })
+      rect(0.13, 0.24, 0.30, 0.40, '感应起电机', 'spark', { note: '点它：摇一次放一次电 —— 电荷放掉就没了' }),
+      rect(0.58, 0.14, 0.34, 0.52, '小灯泡电路', 'lamp', { note: '点它：小灯泡一直亮着，电流没有断' })
     ],
     transient: [
-      rect(0.36, 0.16, 0.12, 0.34, 'A 极（带正电）', 'ballA', { kind: 'poke', note: '点它：A 在得到电子，正电荷在减少' }),
-      rect(0.72, 0.16, 0.12, 0.34, 'B 极（带负电）', 'ballB', { kind: 'poke', note: '点它：B 在失去电子，负电荷在减少' }),
-      rect(0.46, 0.72, 0.16, 0.12, '导线 H', 'wireH', { kind: 'poke', note: '点它：电子从 B 经导线跑到 A —— 但只跑一会儿' })
+      rect(0.06, 0.06, 0.20, 0.86, 'A 极（带正电）', 'ballA', { note: '点它：A 在得到电子，正电荷在减少' }),
+      rect(0.74, 0.06, 0.20, 0.86, 'B 极（带负电）', 'ballB', { note: '点它：B 在失去电子，负电荷在减少' }),
+      rect(0.30, 0.03, 0.40, 0.12, '导线 H', 'wireH', { note: '点它：电子从 B 经导线跑到 A —— 只跑一会儿' })
     ],
     source: [
-      rect(0.52, 0.62, 0.16, 0.16, '装置 P', 'revealP', { kind: 'reveal', once: true,
-        note: '先别看名字 —— 点它，想想这个装置在干什么' }),
-      rect(0.36, 0.16, 0.12, 0.34, 'A 极', 'ballA', { kind: 'poke', note: '点它：P 不断把电子从这里取走' }),
-      rect(0.72, 0.16, 0.12, 0.34, 'B 极', 'ballB', { kind: 'poke', note: '点它：P 不断把电子补回这里' })
+      rect(0.36, 0.68, 0.30, 0.20, '装置 P', 'revealP', { note: '先别看名字 —— 点它，想想这装置在干什么' }),
+      rect(0.06, 0.06, 0.20, 0.86, 'A 极', 'ballA', { note: '点它：装置不断把电子从这里取走' }),
+      rect(0.74, 0.06, 0.20, 0.86, 'B 极', 'ballB', { note: '点它：装置不断把电子补回这里' })
     ],
-    /* 幕三 · 冲突 */
+    pump: [
+      rect(0.02, 0.06, 0.42, 0.86, '抽水机', 'pumpMachine', { note: '点它：抽水机把水送到高处，维持的是"水位差"' }),
+      rect(0.54, 0.06, 0.44, 0.86, '电源', 'pumpSource', { note: '点它：电源把电荷搬到正极，维持的是"电势差"' }),
+      rect(0.02, 0.90, 0.96, 0.09, '共同点？', 'pumpCommon', { note: '点它：两者的共同内核只有一条 —— 维持差额' })
+    ],
     field: [
-      rect(0.36, 0.20, 0.16, 0.30, '静电平衡：E = 0', 'conflictStatic', { kind: 'quiz',
-        note: '点它：这是上一章学过的结论 —— 电荷站住了' }),
-      rect(0.62, 0.20, 0.28, 0.30, '电路中：E ≠ 0', 'conflictCircuit', { kind: 'quiz',
-        note: '点它：可是导线里电荷在动 —— 冲突在哪？' })
+      rect(0.04, 0.10, 0.44, 0.50, '静电平衡：E = 0', 'conflictStatic', { note: '点它：电荷站住了 —— 这是上一章的结论' }),
+      rect(0.54, 0.10, 0.44, 0.50, '电路中：E ≠ 0', 'conflictCircuit', { note: '点它：可导线里电荷在动 —— 冲突在哪？' })
     ],
     flow: [
-      rect(0.36, 0.20, 0.60, 0.34, '电荷分布', 'pokeFlow', { kind: 'poke', note: '点它：分布刻度一直没动，但电子一直在换' })
+      rect(0.02, 0.14, 0.96, 0.58, '电荷分布', 'pokeFlow', { note: '点它：分布刻度一直没动，但电子一直在换' })
     ],
     sawtooth: [
-      rect(0.36, 0.14, 0.30, 0.34, '加速—碰撞曲线', 'pokeSaw', { kind: 'poke', note: '点它：每段都是"加速 → 撞一下归零"' })
+      rect(0.02, 0.06, 0.96, 0.70, '加速—碰撞曲线', 'pokeSaw', { note: '点它：每段都是"加速 → 撞一下归零"' })
     ],
-    /* 幕四 · 定义式 */
+    ammeter: [
+      rect(0.40, 0.50, 0.22, 0.24, '电流表', 'pokeAmmeter', { note: '点它：串联的电流表，读数稳定不变' })
+    ],
+    steady: [
+      rect(0.02, 0.10, 0.96, 0.66, 'I–t 曲线', 'toggleSteady', { note: '点它：在"恒定电流"和"交变电流"之间切换' })
+    ],
     define: [
-      rect(0.36, 0.24, 0.30, 0.24, '横截面', 'pokeCross', { kind: 'poke', note: '点它：电荷是"通过"这个面，不是"导体里有"' }),
-      rect(0.60, 0.60, 0.24, 0.16, '为什么用电荷量？', 'whyCharge', { kind: 'reveal', once: true,
-        note: '点它：用"粒子数"定义电流行不行？' })
+      rect(0.40, 0.02, 0.20, 0.66, '横截面', 'pokeCross', { note: '点它：电荷是"通过"这个面，不是"导体里有"' }),
+      rect(0.36, 0.66, 0.36, 0.24, '为什么用电荷量？', 'whyCharge', { note: '点它：用"粒子数"定义电流行不行？' })
+    ],
+    units: [
+      rect(0.02, 0.10, 0.44, 0.68, '单位阶梯', 'pokeUnits', { note: '点它：单位是推出来的 —— C/s ⇒ 安培 A' }),
+      rect(0.52, 0.10, 0.46, 0.62, '教材练习 1', 'pokeEx1', { note: '点它：1.6×10⁻⁴ C，1.0×10¹⁵ 个电子' })
     ],
     crosssec: [
-      rect(0.44, 0.24, 0.10, 0.22, '垂直截面（θ=0°）', 'thetaZero', { kind: 'pick', note: '点它：切回垂直截面' }),
-      rect(0.50, 0.24, 0.14, 0.22, '斜截面（θ>0）', 'thetaTilt', { kind: 'pick', note: '点它：切成斜截面，看数得到的面积' })
+      rect(0.02, 0.02, 0.48, 0.62, '垂直截面（θ=0°）', 'thetaZero', { note: '点它：切回垂直截面' }),
+      rect(0.52, 0.02, 0.34, 0.62, '斜截面（θ>0）', 'thetaTilt', { note: '点它：切成斜截面，看数得到的面积' })
     ],
     electrolyte: [
-      rect(0.36, 0.16, 0.60, 0.30, '电解液', 'elecMode', { kind: 'pick', note: '点它：切换"等效"与"抵消"两种说法' })
+      rect(0.02, 0.06, 0.96, 0.62, '电解液', 'elecMode', { note: '点它：切换"等效"与"抵消"两种说法' })
     ],
-    /* 幕五 · 微观 */
     micro: [
-      rect(0.36, 0.16, 0.62, 0.34, '电子柱 vt', 'pokeMicro', { kind: 'poke', note: '点它：这一段导体的长度就是 vt' })
+      rect(0.02, 0.10, 0.96, 0.52, '电子柱 vt', 'pokeMicro', { note: '点它：这一段导体的长度就是 vt' })
+    ],
+    driftnum: [
+      rect(0.02, 0.10, 0.96, 0.44, '铜导线', 'pokeDrift', { note: '点它：I = 1 A、S = 1 mm² 时 v 只有 7.5×10⁻⁵ m/s' })
     ],
     lightspeed: [
-      rect(0.36, 0.20, 0.60, 0.20, '闭合开关瞬间', 'pokeLight', { kind: 'poke',
-        note: '点它：电场以光速铺开，各处电子几乎同时动起来' })
+      rect(0.02, 0.06, 0.96, 0.32, '闭合开关瞬间', 'pokeLight', { note: '点它：电场以光速铺开，各处电子几乎同时动起来' })
     ],
-    /* 幕二 · 抽水机类比 */
-    pump: [
-      rect(0.36, 0.14, 0.16, 0.62, '抽水机', 'pumpMachine', { kind: 'poke',
-        note: '点它：抽水机把水从低处送到高处，维持的是"水位差"' }),
-      rect(0.64, 0.14, 0.32, 0.62, '电源', 'pumpSource', { kind: 'poke',
-        note: '点它：电源把正电荷从负极搬到正极，维持的是"电势差"' }),
-      rect(0.40, 0.78, 0.52, 0.14, '共同点？', 'pumpCommon', { kind: 'reveal', once: true,
-        note: '点它：两者的共同内核只有一条 —— 维持差额' })
-    ],
-    /* 幕三 · 电流表 */
-    ammeter: [
-      rect(0.40, 0.62, 0.14, 0.24, '电流表', 'pokeAmmeter', { kind: 'poke',
-        note: '点它：串联的电流表，读数稳定不变' }),
-      rect(0.66, 0.02, 0.22, 0.24, 'I–t 图', 'pokeItCurve', { kind: 'poke',
-        note: '点它：I–t 图是一条水平线 —— 大小、方向都不随时间变化' })
-    ],
-    /* 幕三 · 恒定 vs 交变 */
-    steady: [
-      rect(0.36, 0.10, 0.60, 0.42, 'I–t 曲线', 'toggleSteady', { kind: 'pick',
-        note: '点它：在"恒定电流"和"交变电流"之间切换，看曲线怎么变' })
-    ],
-    /* 幕四 · 单位阶梯 */
-    units: [
-      rect(0.36, 0.18, 0.24, 0.46, '单位阶梯', 'pokeUnits', { kind: 'poke',
-        note: '点它：单位是推出来的 —— I = q/t ⇒ C/s ⇒ 安培 A' }),
-      rect(0.60, 0.14, 0.34, 0.62, '教材练习 1', 'pokeEx1', { kind: 'poke',
-        note: '点它：50 μA × 3.2 s = 1.6×10⁻⁴ C，电子数 1.0×10¹⁵ 个' })
-    ],
-    /* 幕五 · 定量算例 */
-    driftnum: [
-      rect(0.36, 0.20, 0.60, 0.24, '铜导线', 'pokeDrift', { kind: 'poke',
-        note: '点它：I = 1 A、S = 1 mm² 时 v 只有 7.5×10⁻⁵ m/s' }),
-      rect(0.56, 0.50, 0.30, 0.30, '穿过 1 m 需时', 'pokeTransit', { kind: 'poke',
-        note: '点它：按这个速率穿过 1 m 要 3.7 个小时 —— 跟"开关一按灯就亮"完全不符' })
-    ],
-    /* 幕六 · STSE */
     capacity: [
-      rect(0.38, 0.14, 0.14, 0.44, '电池组', 'pokeCap', { kind: 'poke',
-        note: '点它：容量就是电池能输出的总电荷量 q，单位 A·h' }),
-      rect(0.38, 0.16, 0.24, 0.14, '放电进度条', 'pokeSoc', { kind: 'poke',
-        note: '点它：放电时间就是 I = q/t 里的 t' }),
-      rect(0.40, 0.52, 0.24, 0.20, '续航', 'pokeRange', { kind: 'poke',
-        note: '点它：s = v·t；容量 94 A·h、5 h 放电 ⇒ 18.8 A ⇒ 360 km' })
+      rect(0.06, 0.06, 0.40, 0.34, '电池组', 'pokeCap', { note: '点它：容量就是电池能输出的总电荷量 q' }),
+      rect(0.50, 0.06, 0.48, 0.28, '放电进度条', 'pokeSoc', { note: '点它：放电时间就是 I = q/t 里的 t' }),
+      rect(0.06, 0.46, 0.44, 0.28, '续航', 'pokeRange', { note: '点它：s = v·t = 72 × 5 = 360 km' })
     ],
-    /* 幕七 · 小结 */
     chain: [
-      rect(0.38, 0.06, 0.56, 0.90, '因果链', 'pokeChain', { kind: 'poke', note: '点它：按顺序点亮因果链' })
+      rect(0.02, 0.02, 0.96, 0.94, '因果链', 'pokeChain', { note: '点它：按顺序点亮因果链' })
     ]
   };
 
-  /* 需要"先问后命名"的步骤：装置 P 未揭示前，画布上只写"装置？" */
-  var REVEAL = { P: false };
-
   global.DCHOT = {
-    HOTSPOTS: HOTSPOTS, REVEAL: REVEAL,
-    /* 命中检测：返回最上层命中的热区 */
+    HOTSPOTS: HOTSPOTS,
     hit: function (scene, u, v) {
       var list = HOTSPOTS[scene] || [];
       for (var i = list.length - 1; i >= 0; i--) {
@@ -2389,6 +1497,7 @@
       scene: 'intro',
       bullets: [{ text: '火花放电：电流只存在一瞬间' }, { text: '小灯泡：电流持续不断' }, { text: '差别在“能不能一直补上电荷”' }],
       caption: '闪电一瞬间，灯泡一直亮 —— 这节课只解决一个问题：电流怎样才能持续？',
+      captionEn: 'The question',
       init: function (S) { S.spark = 0.6; }
     },
     {
@@ -2402,6 +1511,7 @@
       scene: 'transient',
       bullets: [{ text: '电子从 B 经导线跑到 A' }, { text: '两极电势差很快消失' }, { text: '两导体成为等势体（静电平衡）' }],
       caption: '电势差一消失，电流就停了 —— 瞬时电流',
+      captionEn: 'Transient current',
       init: function (S) { S.tn = 0.0; S.U0 = 300; }
     },
     {
@@ -2418,6 +1528,7 @@
       scene: 'transient',
       bullets: [{ text: '初始电压越大，电流越大' }, { text: '但结局都是衰减到 0' }, { text: '必须有东西补电荷 —— 电源' }],
       caption: '不管初始电压多大，没有电源，电流就撑不住',
+      captionEn: 'No source, no steady current',
       init: function (S) { S.U0 = 300; S.tn = 1; }
     },
 
@@ -2433,6 +1544,7 @@
       scene: 'source',
       bullets: [{ text: 'P 把电子从 A 取走，补回 B' }, { text: '搬运速率 = 流失速率 ⇒ 电荷量不变' }, { text: '这个装置 P 就叫电源' }],
       caption: '电源把电子不断搬回 B，两极电势差才能一直维持',
+      captionEn: 'The device P',
       init: function (S) { S.pump = 1.0; }
     },
     {
@@ -2446,6 +1558,7 @@
       scene: 'source',
       bullets: [{ text: '搬运 < 流失 ⇒ 电荷失衡' }, { text: '电势差变小 ⇒ 电流变小' }, { text: '搬运 = 流失 ⇒ 电流恒定' }],
       caption: '“恒定”来自搬运与流失的动态平衡',
+      captionEn: 'Balance of rates',
       init: function (S) { S.pump = 0.6; }
     },
     {
@@ -2459,6 +1572,7 @@
       scene: 'pump',
       bullets: [{ text: '抽水机搬水，维持水位差' }, { text: '电源搬电荷，维持电势差' }, { text: '共同点只有“维持差额”' }],
       caption: '抽水机维持水位差，电源维持电势差 —— 只类比这一点',
+      captionEn: 'Pump analogy',
       init: function (S) { S.flowq = 0.7; }
     },
 
@@ -2473,6 +1587,7 @@
       scene: 'field',
       bullets: [{ text: '静电平衡：内部 E = 0，无定向移动' }, { text: '电路中：内部 E ≠ 0，有定向移动' }, { text: '这是本节要解的认知冲突' }],
       caption: '静电平衡是“站住了”；电路中的导体是“队伍不停、队形不变”',
+      captionEn: 'Cognitive conflict',
       init: function (S) { S.Uwire = 5; }
     },
     {
@@ -2487,6 +1602,7 @@
       scene: 'flow',
       bullets: [{ text: '有的流走，另外的又来补上' }, { text: '各处电荷量保持不变' }, { text: '电荷分布不变 ⇒ 恒定电场' }],
       caption: '静电平衡是“站住了”，恒定电场是“队伍不停、队形不变”',
+      captionEn: 'Dynamic equilibrium',
       init: function (S) { S.driftPhase = 0.35; }
     },
     {
@@ -2500,6 +1616,7 @@
       scene: 'sawtooth',
       bullets: [{ text: '静电力让电荷加速' }, { text: '碰撞让电荷减速归零' }, { text: '结果：v̄ 不随时间变化' }],
       caption: '加速—碰撞—加速—碰撞：大量自由电荷的平均速率不随时间变化',
+      captionEn: 'Accelerate and collide',
       init: function (S) { S.Efield = 1000; }
     },
     {
@@ -2512,6 +1629,7 @@
       scene: 'ammeter',
       bullets: [{ text: '电流表示数稳定不变' }, { text: '换电压只换位置，不换稳定性' }, { text: '这一章研究恒定电流' }],
       caption: '电流表的读数保持恒定',
+      captionEn: 'Steady current',
       init: function (S) { S.Uamm = 2; }
     },
     {
@@ -2525,6 +1643,7 @@
       scene: 'steady',
       bullets: [{ text: '恒定电流：水平直线' }, { text: '交变电流：大小方向都变' }, { text: '判据是“是否随时间变化”' }],
       caption: '恒定电流是 I–t 图上的一条水平线',
+      captionEn: 'Steady vs alternating',
       init: function (S) { S.mode = 1; }
     },
 
@@ -2544,6 +1663,7 @@
       scene: 'define',
       bullets: [{ text: '“横截面”要通过的电荷量来数' }, { text: 'I = q/t，比值定义电流' }, { text: '用电荷量而非粒子数定义' }],
       caption: '单位时间内通过横截面的电荷量越多，电流就越大',
+      captionEn: 'Electric current',
       init: function (S) { S.Idefine = 1.0; S.tdefine = 4; }
     },
     {
@@ -2560,6 +1680,7 @@
       scene: 'units',
       bullets: [{ text: '单位由定义式自推：C/s → A' }, { text: '1 mA = 10⁻³ A，1 μA = 10⁻⁶ A' }, { text: '练习1：q = 1.6×10⁻⁴ C，1.0×10¹⁵ 个电子' }],
       caption: '先把单位换算清楚，再去做 q = It 的计算',
+      captionEn: 'Ampere',
       init: function (S) { S.Iunit = 50; S.unitIdx = 2; }
     },
     {
@@ -2573,6 +1694,7 @@
       scene: 'crosssec',
       bullets: [{ text: '斜截面以前“数得到”的电荷变少' }, { text: '有效面积 = S·cosθ' }, { text: '横截面必须垂直于电流方向' }],
       caption: '横截面必须垂直于电流方向，跟它是不是圆的无关',
+      captionEn: 'Cross section',
       init: function (S) { S.theta = 30; }
     },
     {
@@ -2590,6 +1712,7 @@
       scene: 'electrolyte',
       bullets: [{ text: '正负离子移动方向相反' }, { text: '它们形成的电流方向相同' }, { text: 'q 是两个电荷量绝对值之和' }],
       caption: '负离子反向运动的电流，与正离子正向运动的电流等效 —— 相加',
+      captionEn: 'Equivalent, not cancel',
       init: function (S) { S.q1 = 2; S.q2 = 3; }
     },
 
@@ -2605,6 +1728,7 @@
       scene: 'micro',
       bullets: [{ text: 'vt：长度' }, { text: 'Svt：体积 → nSvt：电子总数' }, { text: 'neSvt：总电荷量 ⇒ I = neSv' }],
       caption: '四步都是同一段导体的长度、体积、粒子数与电荷量',
+      captionEn: 'Microscopic expression',
       init: function (S) { S.tFrac = 0.45; }
     },
     {
@@ -2618,6 +1742,7 @@
       scene: 'driftnum',
       bullets: [{ text: 'n 由铜的密度与摩尔质量算出' }, { text: 'v = I/(neS) 只有 10⁻⁵ m/s' }, { text: '穿过 1 m 要几个小时' }],
       caption: '电子定向移动只有 10⁻⁵ m/s，穿过 1 m 要几个小时',
+      captionEn: 'Drift speed',
       init: function (S) { S.Idrift = 1; }
     },
     {
@@ -2631,6 +1756,7 @@
       scene: 'lightspeed',
       bullets: [{ text: '电场以光速（3×10⁸ m/s）建立' }, { text: '各处电子几乎同时开始移动' }, { text: '不是电子从电源跑到灯泡' }],
       caption: '“电流传得快”是电场建立得快，不是电子跑得快',
+      captionEn: 'Field at speed of light',
       init: function (S) { S.lenL = 1; }
     },
 
@@ -2650,6 +1776,7 @@
       scene: 'capacity',
       bullets: [{ text: '容量 = 电池能输出的总电荷量' }, { text: '容量就是 q，放电时间就是 t' }, { text: 'I = q/t 算电流，s = v·t 算续航' }],
       caption: '安时（A·h）是电荷量的单位：1 A·h = 3600 C',
+      captionEn: 'Battery capacity',
       init: function (S) { S.capAh = 94; S.capT = 5; S.kmh = 72; }
     },
 
@@ -2665,6 +1792,7 @@
       scene: 'chain',
       bullets: [{ text: '一条因果链把全课串起来' }, { text: '“持续”来自电源的搬运' }, { text: 'I = q/t 定量描述强弱' }],
       caption: '电源搬运电荷 → 电势差不变 → 恒定电场 → 定向移动＋碰撞 → 恒定电流',
+      captionEn: 'Summary',
       init: function (S) { S.chainP = 5; }
     }
   ];
@@ -2833,7 +1961,7 @@
   function draw() {
     var def = STEPS[st.step];
     S = derive(st);
-    S.bullets = def.bullets; S.caption = def.caption;
+    S.bullets = def.bullets; S.caption = def.caption; S.captionEn = def.captionEn;
     S.tapList = (HD.HOTSPOTS[def.scene] || []);
     updatePanel(); markToc();          /* 先建控件 → 底栏高度定下来（避免画布慢一帧） */
     var f = R.fitCanvas(cv, ctx);
