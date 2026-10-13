@@ -59,6 +59,7 @@
   button.b:hover{background:var(--btnH)}
   button.b:disabled{opacity:.35;cursor:default}
   button.b.pri{background:var(--btnM);border-color:#3a3a3a}
+  button.b.on{background:#102a34;border-color:#2E9FD0;color:#7FD8F5}
   #prog{flex:1 1 140px;height:6px;background:#161616;border-radius:3px;position:relative;cursor:pointer;min-width:90px}
   #progFill{position:absolute;left:0;top:0;bottom:0;background:var(--gold);border-radius:3px;transition:width .18s}
   .ctrl{display:flex;flex-direction:column;gap:3px;min-width:150px;flex:1 1 160px;max-width:250px}
@@ -111,7 +112,7 @@
     <div class="sec"><h2>这一步画布上能点</h2><div id="pTap"></div></div>
     <div class="sec"><h2>操作</h2>
       <div class="row" style="font-size:11.5px;color:#8f8f8f">
-        键盘：← → 翻步 · R 复位 · Home/End 首末步 · 空格 暂停/继续<br>
+        键盘：← → 翻步 · R 复位 · Home/End 首末步 · 空格 播放/暂停 · S 停止<br>
         画布：点对象 = 看讲解 · 左右拖动 = 拖本步的第一个连续量<br>
         <b style="color:#05E8FD">动画是自动播的</b>：不拖也在走；你一拖一停，它就让位 3.5 s 再来
       </div>
@@ -125,7 +126,8 @@
     <button class="b" id="btnPrev">◀ 上一步</button>
     <button class="b pri" id="btnNext">下一步 ▶</button>
     <button class="b" id="btnReset">↺ 复位本步</button>
-    <button class="b" id="btnPlay" title="暂停/继续动画">❚❚ 暂停动画</button>
+    <button class="b" id="btnPlay" title="播放 / 暂停（空格）">❚❚ 暂停</button>
+    <button class="b" id="btnStop" title="停止并回到初始状态（S）">■ 停止</button>
     <button class="b" id="btnSpeed" title="切换动画倍速">1.0×</button>
     <div id="prog"><div id="progFill"></div></div>
   </div>
@@ -211,6 +213,20 @@
   function driftSpeed(I, n, S) { return I / (n * E_CHARGE * S); }
   /* 由微观量算电流 I = neSv */
   function currentFromDrift(n, S, v) { return n * E_CHARGE * S * v; }
+  /* —— 动画用：把"真实漂移速率"映射成屏幕像素速度 ——
+     物理量：v = I/(nqS)；因为真实 v 只有 10⁻⁵ m/s，屏幕上直接照搬看不出来，
+     所以按"同一导体、同一微观参数"的**线性比例**放大：
+        v_px/s = K_PX · v = K_PX · I/(nqS)
+     即：像素速度与电流 I 严格成正比，且比值由 n、q、S 决定。
+     I 加倍 ⇒ 屏幕上电荷点速度加倍；换导体（S、n 变）速度按 1/(nS) 变。 */
+  var K_PX = 1;                                   // 像素·(s·m/s)⁻¹ 的比例常数，由场景给
+  function driftPxPerSec(I, n, S, kpx) {
+    return (kpx == null ? K_PX : kpx) * driftSpeed(I, n, S);
+  }
+  /* 一段时间内通过横截面的电荷量：q = It（用于画布内实时读数） */
+  function passedCharge(I, t) { return I * t; }
+  /* 当前动画时刻已通过横截面的电子数 */
+  function passedElectrons(I, t) { return Math.abs(I) * t / E_CHARGE; }
   /* 四步推导链：一段导体中的电子柱 */
   function microChain(t, v, S, n) {
     var L = v * t;             // vt   —— 导体长度
@@ -310,6 +326,14 @@
     chkTrue('平均速率随 E 单调增', avgDrift(2e3, TAU_CU) > avgDrift(1e3, TAU_CU));
     /* 微观自洽：加速—碰撞模型给出的 v̄ 必须与 v = I/(neS) 对上 */
     chk('v̄ = eEτ/(2m) 与 v = I/(neS) 自洽', avgDrift(0.0175), driftSpeed(1, nCu, 1e-6), 2e-6);
+    /* 动画驱动：屏幕速度必须由电流驱动（严格正比），不能只是"看起来在动" */
+    chk('像素速度 ∝ I：I 加倍 ⇒ 速度加倍',
+      driftPxPerSec(2, nCu, 1e-6, 1e6) / driftPxPerSec(1, nCu, 1e-6, 1e6), 2, 1e-12);
+    chk('I = 0 ⇒ 速度 = 0（电荷静止）', driftPxPerSec(0, nCu, 1e-6, 1e6), 0, 0);
+    chk('v 与横截面积成反比：S 减半 ⇒ v 加倍',
+      driftSpeed(1, nCu, 0.5e-6) / driftSpeed(1, nCu, 1e-6), 2, 1e-12);
+    chk('q = It：I=2 A、t=3 s ⇒ 6 C', passedCharge(2, 3), 6, 1e-12);
+    chk('电子数 n = It/e', passedElectrons(1, 1), 1 / E_CHARGE, 1e-6);
 
     /* —— 瞬间电流 —— */
     chk('RC 放电 t = τ 时 U 降到 1/e', rcDecay(300, 1, 1e-4, 1e-4), 300 / Math.E, 1e-9);
@@ -338,6 +362,7 @@
     carrierDensity: carrierDensity, copperCarrierDensity: copperCarrierDensity,
     driftSpeed: driftSpeed, currentFromDrift: currentFromDrift, microChain: microChain,
     transitTime: transitTime, fieldTime: fieldTime,
+    driftPxPerSec: driftPxPerSec, passedCharge: passedCharge, passedElectrons: passedElectrons,
     accel: accel, peakSpeed: peakSpeed, avgDrift: avgDrift, steadyAvg: steadyAvg,
     rcDecay: rcDecay, rcCurrent: rcCurrent, tauRC: tauRC, dischargeTotalCharge: dischargeTotalCharge,
     capacityCharge: capacityCharge, dischargeCurrent: dischargeCurrent,
@@ -347,18 +372,19 @@
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 <script>/* =====================================================================
-   viz_dc_anim.js —— 11.1 动画内核（时钟 / 入场节拍 / 自动演示）
+   viz_dc_anim.js —— 11.1 动画内核（时钟 / 入场节拍 / 自动演示 / 播放控制）
 
    为什么必须单独一层：
      电流的本质是"电荷的定向移动"，静态画面讲不了这件事 ——
      参考片 BV1fnxdziE14 的签名手法就是"每个概念一段小动画、元素逐步叠加"。
-     本文件把它落成三样机制：
+     本文件把它落成四样机制：
 
      ① 可冻结的时钟 AN.t —— 所有持续运动（电荷流动、波前推进、指针阻尼）
-        都从它派生；冻结后画面与时间无关，正反向像素指纹才能逐字节一致；
+        都从它派生；
      ② 入场节拍器 AN.rise(起, 时长) —— 元素依次淡入浮起 = 逐步叠加；
-     ③ 自动演示扫掠 AN.auto —— 把每一步的连续量按时间扫过（放电过程、
-        电子柱生长、因果链点亮…），老师不拖也有动画。
+     ③ 自动演示扫掠 AN.auto —— 把每一步的连续量按时间扫过；
+     ④ **播放控制（要求①）**：暂停 = 时钟停 + rAF 停 ⇒ 画面冻结在当前帧；
+        停止 = 暂停 + 时刻归零 + 通知外部复位状态 ⇒ 回到初始状态。
 
    铁律不变：物理仍由 viz_dc_physics.js 的纯函数决定，本层只管"何时画"。
    ===================================================================== */
@@ -370,27 +396,84 @@
     stepT: 0,        // 当前这一步的"龄"（秒）：入场叠加的唯一时间源
     playing: true,   // 自动播放（按钮可切）
     speed: 1,        // 播放倍速
-    frozen: false,   // 验收用：冻结时钟 → 画面与时间无关
+    frozen: false,   // 验收用：冻结时钟 → 画面与时间无关（相位取固定常量）
     holdUntil: 0,    // 用户刚拖过 → 自动演示让位到这一刻（秒）
     autoU: 0,        // 当前这步的自动扫掠进度 0→1
-    autoKey: ''      // 正在扫掠的连续量（换量时进度归零）
+    autoKey: '',     // 正在扫掠的连续量（换量时进度归零）
+    raf: 0,          // rAF 句柄（暂停时取消）
+    lastTs: 0,
+    onFrame: null,   // 每帧回调（由 app 注入：推进自动演示 + 重绘）
+    onStop: null     // 停止时的回调（由 app 注入：复位本步状态）
   };
 
   AN.reset = function () {
     AN.t = 0; AN.stepT = 0; AN.holdUntil = 0; AN.autoU = 0; AN.autoKey = '';
   };
+  /* 时钟推进：只要暂停（playing=false）或冻结（frozen），就一格都不走。
+     这是"暂停真正冻结当前帧"的根 —— 循环里调它，暂停时它直接返回。 */
   AN.tick = function (dt) {
-    if (AN.frozen) return;
+    if (AN.frozen || !AN.playing) return;
     AN.t += dt; AN.stepT += dt;
   };
+
+  /* ---------------- 播放控制（要求①：暂停真冻结、停止回初态） ---------------- */
+  function nowMs() {
+    return (global.performance && global.performance.now) ? global.performance.now() : Date.now();
+  }
+  function loop(ts) {
+    AN.raf = global.requestAnimationFrame(loop);
+    var dt = (ts - AN.lastTs) / 1000;
+    AN.lastTs = ts;
+    if (!isFinite(dt) || dt <= 0) dt = 1 / 60;
+    if (dt > 0.1) dt = 0.1;                 // 切标签页回来别跳帧
+    if (!AN.playing || AN.frozen) return;
+    AN.tick(dt);
+    if (AN.onFrame) AN.onFrame();
+  }
+  /* 起循环：只要循环在跑，暂停/继续都靠 playing 开关控制 */
+  AN.startLoop = function () {
+    if (AN.raf || !global.requestAnimationFrame) return;
+    AN.lastTs = nowMs();
+    AN.raf = global.requestAnimationFrame(loop);
+  };
+  AN.stopLoop = function () {
+    if (AN.raf && global.cancelAnimationFrame) global.cancelAnimationFrame(AN.raf);
+    AN.raf = 0;
+  };
+  /* 播放：时钟继续走，画面从当前帧接着动 */
+  AN.play = function () {
+    AN.playing = true;
+    AN.startLoop();
+    if (AN.onFrame) AN.onFrame();
+  };
+  /* 暂停：playing=false ⇒ loop 里 tick 与 onFrame 都不执行 ⇒ 当前帧被冻住。
+     注意：不动 AN.t/AN.stepT —— 所以恢复播放时是"从暂停处接着走"。 */
+  AN.pause = function () {
+    AN.playing = false;
+    if (AN.onFrame) AN.onFrame();          // 立刻重绘一次，把"已暂停"状态画出来
+  };
+  AN.togglePlay = function () { AN.playing ? AN.pause() : AN.play(); };
+  /* 停止：暂停 + 时钟归零 + 入场节拍归零 + 通知外部复位 → 回到初始状态 */
+  AN.stop = function () {
+    AN.pause();
+    AN.t = 0; AN.stepT = 99; AN.autoU = 0; AN.autoKey = ''; AN.holdUntil = 0;
+    if (AN.onStop) AN.onStop();
+    AN.playing = false;            /* 回调里可能被重新打开，这里再钉一次 */
+    AN.t = 0; AN.stepT = 99;
+    if (AN.onFrame) AN.onFrame();
+  };
+  AN.setSpeed = function (s) { AN.speed = s; };
+
   /* 冻结：验收时用一个固定时刻取像素指纹（默认 3 s —— 入场早走完、相位固定） */
   AN.freeze = function (sec) {
     AN.frozen = true; AN.playing = false;
     AN.t = sec == null ? 3 : sec;
     AN.stepT = 99;
+    AN.stopLoop();
   };
   AN.thaw = function () {
     AN.frozen = false; AN.playing = true; AN.stepT = 99;
+    AN.startLoop();
   };
   /* 进入新的一步：入场节拍从头开始，自动扫掠归零 */
   AN.beginStep = function () {
@@ -429,7 +512,8 @@
   /* ---------------- 自动演示：把这一步的连续量按时间扫过 ----------------
      配置形如 { key:'tn', from:0, to:1, dur:7, step:0.01 }
        · 单向循环：扫到 to 之后回到 from 重来（反向重来会让电子倒流，误导）
-       · 用户在拖动这个量时不抢（hold 窗口内不动） */
+       · 用户在拖动这个量时不抢（hold 窗口内不动）
+       · 暂停时不推进（playing=false 时直接返回） */
   AN.auto = function (cfg, st, onSet) {
     if (!cfg || AN.frozen || !AN.playing || AN.held()) return false;
     if (AN.autoKey !== cfg.key) { AN.autoKey = cfg.key; AN.autoU = 0; }
@@ -445,8 +529,122 @@
     return true;
   };
 
+  /* ---------------- 电流驱动（要求②）----------------
+     电荷定向移动的速度必须由电流值决定：I = nqSv ⇒ v = I/(nqS)。
+     本函数把物理速率换算成屏幕上的像素速率：
+       v_px/s = kpx · v = kpx · I/(nqS)
+     同一导体下 v_px ∝ I；I 加倍 ⇒ 屏幕上跑得加倍快；I = 0 ⇒ 完全静止。
+     相位（0–1）由"走过的像素 ÷ 路径长度"给出，可直接喂给沿线布点的函数。 */
+  AN.driftPhase = function (tSec, vPxPerSec, pathLenPx) {
+    if (!pathLenPx || !isFinite(vPxPerSec)) return 0;
+    return AN.wrap((tSec * vPxPerSec) / pathLenPx);
+  };
+
   /* 兼容：没有动画时钟时（比如自检脚本里）一切退回"静止但正确" */
   global.DCANIM = AN;
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+<script>/* =====================================================================
+   viz_dc_neutral.js —— 正负电荷相遇中和（要求③）
+
+   物理：A 板带正电（+）、B 板带负电（−）。导线把两板连起来后，自由电子从 B 跑向 A；
+        到达 A 板的电子与 A 板上的正电荷**相遇中和**，两者同时消失，A、B 的电荷量各减 1。
+        中和产物是一个**中性粒子**（灰色，不带电），会从相遇点向外散开。
+
+   表现：
+     · 电子沿导线飞向 A 板（速度由电流 I 驱动）
+     · 到达 A 板表面时，与最近的"未中和正电荷"结成一对
+     · 该对消失 → 原位出现一个灰点（中性粒子）+ 一圈扩散环
+     · 中性粒子缓慢上升/淡出，最后停住（留在画面上，可数出中和了多少对）
+
+   状态约定（供渲染层只读）：
+     pairs      已中和对数
+     neutral[]  中性粒子 {x, y, born, r}
+     plus[]     A 板上仍带正电的位置（未中和）
+     minus[]    B 板上仍带负电的位置
+   ===================================================================== */
+(function (global) {
+  'use strict';
+
+  var NEUTRAL_LIFE = 2.6;      // 中性粒子淡出前的停留时长（秒）
+
+  /* 由"已通过横截面的电荷量 q"算出应当中和的对数：
+     n 对 = q / e  —— 每一对中和，正好搬运一个元电荷的电荷量。
+     为了在课堂上看得清，屏幕上的对数按比例缩放（scale），但**比例关系严格**。 */
+  function pairsFromCharge(q, scale) {
+    var raw = Math.abs(q) / 1.602176634e-19;
+    return raw * (scale == null ? 1 : scale);
+  }
+
+  /* 中和进度：0–1（0 = 一个都没中和，1 = 全部中和完）
+     依据：两板原有电荷量 q0，通过导线的电荷量 q(t) = ∫I dt ⇒ 中和比例 = q/q0 */
+  function progress(qPassed, q0) {
+    if (q0 <= 0) return 0;
+    if (qPassed <= 0) return 0;                     // 负的通过电荷量视为"还没开始"
+    return Math.min(1, qPassed / q0);
+  }
+
+  /* 造一批中性粒子：在相遇点分散开（确定性分布，不用随机数——保证取帧可复现） */
+  function makeNeutral(x, y, born, idx, r) {
+    /* 用 idx 做确定性偏移，画面上看起来像"四散"，但每次重绘完全一致 */
+    var a = (idx * 2.399963) % (Math.PI * 2);      // 黄金角，散得均匀
+    return { x: x, y: y, born: born, idx: idx, r: r || 5, ax: Math.cos(a), ay: Math.sin(a) };
+  }
+  /* 中性粒子在 t 时刻的位置（离开相遇点后缓慢外移 + 停住） */
+  function neutralPos(np, t, travel) {
+    var age = Math.max(0, t - np.born);
+    var d = Math.min(travel || 46, age * 22);      // 22 px/s，走到 travel 就停
+    return { x: np.x + np.ax * d, y: np.y + np.ay * d, alpha: alphaOf(np, t) };
+  }
+  /* 中性粒子**不淡出**：留在相遇点旁边，学生可以数出"已经中和了几对"。
+     （若将来想让它淡出，把下面两行换成注释里的衰减式即可） */
+  function alphaOf(np, t) {
+    return 1;
+    /* var age = Math.max(0, t - np.born);
+       if (age < NEUTRAL_LIFE) return 1;
+       return Math.max(0, 1 - (age - NEUTRAL_LIFE) / 1.6); */
+  }
+
+  /* 单向迁移模型：给定 t 与速度，算"第 k 个电子"走到哪了（0–1 沿路径） */
+  function travelFrac(t, tStart, vPxPerSec, spanPx) {
+    if (spanPx <= 0) return 0;
+    return Math.min(1, Math.max(0, (t - tStart) * vPxPerSec / spanPx));
+  }
+
+  global.DCNEU = {
+    NEUTRAL_LIFE: NEUTRAL_LIFE,
+    pairsFromCharge: pairsFromCharge,
+    progress: progress,
+    makeNeutral: makeNeutral,
+    neutralPos: neutralPos,
+    alphaOf: alphaOf,
+    travelFrac: travelFrac,
+    /* 自检：中和的物理关系必须严格 */
+    runSelfTest: function () {
+      var R = [], fails = [];
+      function chk(n, got, want, tol) {
+        var ok = Math.abs(got - want) <= (tol == null ? 0 : tol);
+        R.push({ name: n, got: got, want: want, ok: ok }); if (!ok) fails.push(R[R.length - 1]);
+      }
+      var e = 1.602176634e-19;
+      chk('1 C 恰好中和 1/e 对', pairsFromCharge(1, 1), 1 / e, 1e4);
+      chk('通过的电荷量加倍 ⇒ 中和对数加倍', pairsFromCharge(2, 1) / pairsFromCharge(1, 1), 2, 1e-9);
+      chk('未通过电荷 ⇒ 不中和', pairsFromCharge(0, 1), 0, 0);
+      chk('进度：过一半电荷 ⇒ 中和一半', progress(0.5, 1), 0.5, 1e-12);
+      chk('进度封顶为 1', progress(3, 1), 1, 1e-12);
+      chk('进度不能为负', progress(-1, 1), 0, 1e-12);
+      chk('q0 = 0 时进度为 0（防除零）', progress(1, 0), 0, 0);
+      var np = makeNeutral(0, 0, 0, 3, 5);
+      chk('中性粒子出生时位于相遇点', Math.hypot(neutralPos(np, 0, 46).x, neutralPos(np, 0, 46).y), 0, 1e-9);
+      chk('中性粒子会离开相遇点', Math.hypot(neutralPos(np, 2, 46).x, neutralPos(np, 2, 46).y) > 10 ? 1 : 0, 1, 0);
+      chk('走满行程后停住', Math.hypot(neutralPos(np, 99, 46).x, neutralPos(np, 99, 46).y), 46, 1e-6);
+      chk('刚出生时完全不透明', alphaOf(np, 0.1), 1, 1e-9);
+      chk('过了停留期开始淡出', alphaOf(np, NEUTRAL_LIFE + 1.6), 0, 1e-9);
+      chk('迁移分数封顶为 1', travelFrac(99, 0, 100, 100), 1, 1e-12);
+      chk('迁移分数不为负', travelFrac(-5, 0, 100, 100), 0, 1e-12);
+      return { pass: fails.length === 0, total: R.length, failed: fails.length, results: R, fails: fails };
+    }
+  };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 <script>/* =====================================================================
@@ -484,6 +682,7 @@
     batMid:  '#3E7FA8',
     batLo:   '#1B3A5C',          // 电池正极端（深蓝方块）
     res:     '#4A87B0',          // 电阻体
+    neutral: '#8E8E8E',          // 中和后的中性粒子（灰）
     plate:   '#8A8A8A',          // 电极板
     plateLo: '#5A5A5A',
     text:    '#FFFFFF',
@@ -605,6 +804,47 @@
     if (o.glow !== false) { ctx.shadowColor = col; ctx.shadowBlur = 8; }
     ctx.fillStyle = col;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  /* 中性粒子：正负电荷相遇中和后的产物（灰色，无电性） */
+  function neutral(ctx, x, y, r, o) {
+    o = o || {};
+    ctx.save();
+    ctx.globalAlpha = o.alpha == null ? 1 : o.alpha;
+    ctx.fillStyle = K.neutral;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.40)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+  }
+  /* 中和瞬间的扩散环（只在刚结成对的位置出现一下） */
+  function pairRing(ctx, x, y, r, alpha) {
+    if (alpha <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+
+  /* ---------- 画布内读数块（实时去量） ---------- */
+  function readoutBox(ctx, x, y, w, rows, o) {
+    o = o || {};
+    var k = o.k || 1, lh = (o.lh || 23) * k, pad = 10 * k;
+    var h = rows.length * lh + pad * 2 - 5 * k;
+    ctx.save();
+    ctx.fillStyle = 'rgba(10,10,10,0.74)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i], yy = y + pad + i * lh + 5 * k;
+      T(ctx, r[0], x + pad, yy, { size: 18 * k, color: o.labelColor || K.dim });
+      T(ctx, r[1], x + w - pad, yy, { size: 18 * k, color: r[2] || K.text, align: 'right' });
+    }
     ctx.restore();
   }
   /* 沿折线排布电荷点：n 个，phase 循环平移（用于"流动"） */
@@ -837,6 +1077,7 @@
     T: T, M: M, bgGrid: bgGrid, wirePath: wirePath, battery: battery, resistor: resistor,
     plate: plate, charge: charge, chargeFlow: chargeFlow, chargeColumn: chargeColumn,
     pathAt: pathAt, front: front, trailDot: trailDot, burst111: burst111, fade: fade,
+    neutral: neutral, pairRing: pairRing, readoutBox: readoutBox,
     conceptCard: conceptCard, legend111: legend111, caption111: caption111, stepTitle: stepTitle,
     polyAt111: at
   };
@@ -867,7 +1108,7 @@
       my0: H * 0.14,  my1: H * 0.855,                       // 主图上下
       cx: (card && W >= 720) ? W * 0.685 : W,               // 概念卡左缘
       cy: H * 0.24,
-      legendX: W * 0.075, legendY: H - 116 * k              // 图例：抬到底部字幕之上
+      legendX: W * 0.075, legendY: H - 152 * k             // 图例：抬到底部字幕之上（留足间距）
     };
   }
   function mx(L, u) { return L.mx0 + (L.mx1 - L.mx0) * u; }
@@ -995,80 +1236,97 @@
   var Z2 = global.DCANIM || { wrap: function (x) { x = x % 1; return x < 0 ? x + 1 : x; } };
 
   /* =====================================================================
-     场景 2 · 两带电板 + 导线 H：只有瞬间电流（环节①）
+     场景 2 · 两带电板 + 导线 H：瞬间电流 + 正负电荷中和（环节①）
+     要求②：电子漂移速度由 I 驱动（v = I/(nqS)，屏幕速度 ∝ I）+ 画布内实时读数
+     要求③：电子到达 A 板 → 与板上正电荷结成对 → 变中性粒子（灰）+ 扩散环
      ===================================================================== */
   function scTransient(ctx, W, H, S) {
-    /* —— 动画改造（v4）——
-       参考片这里的签名手法：电子从 B 极"一批批"涌向 A、两极电荷随放电一格一格减少、
-       电流强度跟着变小、U–t 曲线上的游标同步下落。四个动作由同一个 t 驱动。 */
     var k = Z.sc(H), L = layout(W, H, {});
+    var NU = global.DCNEU;
     shell(ctx, W, H, S, L, {
-      cn: '两板用导线连起来：电流只是瞬间的', en: 'Transient current',
+      cn: S.finished ? '中和完毕：两板都不带电，电流随之消失'
+                     : '电子跑到 A 板，与板上的正电荷结成对（中和）',
+      en: 'Transient current & neutralization',
       card: [
         { label: '起因', text: 'A 带正电、B 带负电' },
         { label: '过程', text: '电子从 B 经导线跑到 A', color: K.neg },
-        { label: '结果', text: '电势差消失 → 等势体', color: K.text },
-        { formula: 'U → 0  ⇒  I → 0' }
+        { label: '中和', text: '与正电荷结成对 ⇒ 中性粒子', color: K.neutral },
+        { label: '结果', text: '两板都不带电 ⇒ 电流停止', color: K.text },
+        { formula: 'I = q / t' }
       ],
-      rings: [[mx(L, 0.04), my(L, 0.06), (L.mx1 - L.mx0) * 0.20, (L.my1 - L.my0) * 0.86],
-              [mx(L, 0.76), my(L, 0.06), (L.mx1 - L.mx0) * 0.20, (L.my1 - L.my0) * 0.86]]
+      rings: [[mx(L, 0.02), my(L, 0.06), (L.mx1 - L.mx0) * 0.22, (L.my1 - L.my0) * 0.82],
+              [mx(L, 0.76), my(L, 0.06), (L.mx1 - L.mx0) * 0.22, (L.my1 - L.my0) * 0.82]]
     });
-    var ax = mx(L, 0.14), bx1 = mx(L, 0.86), cy = my(L, 0.30), ph = (L.my1 - L.my0) * 0.62;
-    Z.plate(ctx, ax, cy + ph / 2 - 60 * k, 13 * k, ph, {});
-    Z.plate(ctx, bx1, cy + ph / 2 - 60 * k, 13 * k, ph, {});
-    Z.T(ctx, 'A', ax - 26 * k, cy + ph / 2 - 60 * k, { size: 24 * k, color: K.text, base: 'middle' });
-    Z.T(ctx, 'B', bx1 + 26 * k, cy + ph / 2 - 60 * k, { size: 24 * k, color: K.text, base: 'middle' });
-    /* —— 导线（顶部折线）：先出现骨架，再让电子跑起来 —— */
-    var yT = my(L, 0.10);
-    D(ctx, S.r0, function () {
-      Z.wirePath(ctx, [[ax, yT], [bx1, yT]], { w: 3 * k });
-      Z.wirePath(ctx, [[ax, yT], [ax, cy]], { w: 3 * k });
-      Z.wirePath(ctx, [[bx1, yT], [bx1, cy]], { w: 3 * k });
-      Z.T(ctx, 'H', (ax + bx1) / 2, yT - 22 * k, { size: 22 * k, align: 'center', color: K.text });
-    });
-    /* 板上的电荷（随放电一格格减少） */
-    D(ctx, S.r1, function () {
-      Z.chargeColumn(ctx, ax - 12 * k, cy + 20 * k, cy + ph - 90 * k, Math.max(0, S.nA), 'pos', { r: 4.6 * k });
-      Z.chargeColumn(ctx, bx1 + 12 * k, cy + 20 * k, cy + ph - 90 * k, Math.max(0, S.nB), 'neg', { r: 4.6 * k });
-    });
-    /* —— 电流：数值上由 I 决定，画面上是"一批批电子连续通过 H" —— */
-    D(ctx, S.r2, function () {
-      if (S.I > 1e-6) {
-        /* 点密度按电流缩放：I 越小，通过的点越稀（"电流变小"看得见） */
-        var dens = Math.max(2, Math.round(9 * Math.min(1, S.I / (S.U0 || 1))));
-        var seg = [[bx1, yT], [ax, yT]];
-        Z.chargeFlow(ctx, seg, dens, S.flowPhase, { kind: 'neg', r: 4.4 * k });
-        Z.trailDot(ctx, seg, S.flowPhase, { r: 5, k: k });
+    var ax = mx(L, 0.22), bx1 = mx(L, 0.78), cy = my(L, 0.30), ph = (L.my1 - L.my0) * 0.52;
+    var plateTop = cy + ph / 2 - 60 * k, plateBot = plateTop + ph, pcy = plateTop + ph / 2;
+    Z.plate(ctx, ax, pcy, 13 * k, ph, {});
+    Z.plate(ctx, bx1, pcy, 13 * k, ph, {});
+    Z.T(ctx, 'A', ax - 26 * k, pcy, { size: 24 * k, color: K.text });
+    Z.T(ctx, 'B', bx1 + 26 * k, pcy, { size: 24 * k, color: K.text });
+
+    /* —— 板上剩余的电荷：随中和一格格减少 —— */
+    var nTot = Math.max(1, S.n0 || 6);
+    var nLeft = Math.max(0, nTot - (S.neutralPairs || 0));
+    var yq0 = plateTop + 26 * k, yq1 = plateBot - 26 * k;
+    if (nLeft > 0) {
+      for (var i = 0; i < nLeft; i++) {
+        var yy = yq0 + (yq1 - yq0) * (nLeft === 1 ? 0.5 : i / (nLeft - 1));
+        Z.charge(ctx, ax - 13 * k, yy, 4.8 * k, 'pos', { glow: false });
+        Z.charge(ctx, bx1 + 13 * k, yy, 4.8 * k, 'neg', {});
       }
-      /* 电流方向标（约定方向：A → B，与电子实际方向相反） */
-      Z.T(ctx, 'I', (ax + bx1) / 2, yT - 46 * k, { size: 22 * k, align: 'center', color: K.neg });
-    });
-    /* 电流强度做成一条会缩短的亮条：放电快结束时它几乎看不见 */
-    D(ctx, S.r3, function () {
-      var bw = (L.mx1 - L.mx0) * 0.30;
-      var bx2 = mx(L, 0.10), by2 = my(L, 0.90);
-      Z.T(ctx, '电流强度', bx2 - 12 * k, by2, { size: 18 * k, align: 'right', color: K.dim });
-      Z.wirePath(ctx, [[bx2, by2], [bx2 + bw, by2]], { color: 'rgba(255,255,255,0.20)', w: 7 * k });
-      /* 电流在衰减：亮条越来越短，就是"电流越来越小" */
-      Z.wirePath(ctx, [[bx2, by2], [bx2 + bw * Math.min(1, S.I / (S.U0 || 1)), by2]], { color: K.neg, w: 7 * k });
-    });
-    /* 微型 U–t 曲线 */
-    var gx = mx(L, 0.06), gy = my(L, 0.62), gw = (L.mx1 - L.mx0) * 0.30, gh = (L.my1 - L.my0) * 0.20;
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.6 * k;
-    ctx.beginPath(); ctx.moveTo(gx, gy + gh); ctx.lineTo(gx + gw, gy + gh); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx, gy + gh); ctx.stroke();
-    ctx.strokeStyle = K.neg; ctx.lineWidth = 2.6 * k;
-    ctx.beginPath();
-    for (var i = 0; i <= 40; i++) {
-      var tt = i / 40, yy = gy + gh - gh * Math.exp(-tt * 5);
-      i ? ctx.lineTo(gx + gw * tt, yy) : ctx.moveTo(gx, yy);
     }
-    ctx.stroke();
-    ctx.restore();
-    Z.charge(ctx, gx + gw * S.tn, gy + gh - gh * S.frac, 4.4 * k, 'neg', {});
-    Z.T(ctx, 'U', gx - 12 * k, gy, { size: 20 * k, align: 'right', color: K.dim });
-    Z.T(ctx, 't', gx + gw + 12 * k, gy + gh, { size: 20 * k, color: K.dim });
+
+    /* —— 导线（直角折线）—— */
+    var yT = my(L, 0.10);
+    Z.wirePath(ctx, [[ax, yT], [bx1, yT]], { w: 3 * k });
+    Z.wirePath(ctx, [[ax, yT], [ax, plateTop]], { w: 3 * k });
+    Z.wirePath(ctx, [[bx1, yT], [bx1, plateTop]], { w: 3 * k });
+    Z.T(ctx, 'H', (ax + bx1) / 2, yT - 22 * k, { size: 22 * k, align: 'center', color: K.text });
+
+    /* —— 正在迁移的电子：位置由 (时刻, 电流驱动的像素速度) 决定 ——
+       同一导体下速度 ∝ I：放电初期电流大 → 跑得快；快结束时 I→0 → 几乎停下。 */
+    var pathPx = [[bx1, plateTop + 16 * k], [bx1, yT], [ax, yT], [ax, plateTop + 16 * k]];
+    if (!S.finished && S.vPx > 1e-6) {
+      var span = Math.abs(bx1 - ax) * 2 + Math.abs(yT - plateTop) * 2;
+      var nFly = 6;
+      for (var j = 0; j < nFly; j++) {
+        var f = Z2.wrap(S.animT * S.vPx / span - j / nFly);
+        var p = Z.polyAt111(pathPx, f);
+        Z.charge(ctx, p.x, p.y, 4.6 * k, 'neg', {});
+      }
+    }
+
+    /* —— 已中和的中性粒子（灰点 + 出生瞬间的扩散环）—— */
+    var neutrals = S.neutrals || [];
+    for (var m = 0; m < neutrals.length; m++) {
+      var np = neutrals[m];
+      var age = S.animT - np.born;
+      var pp = NU.neutralPos(np, S.animT, 34 * k);
+      /* 出生点在 A 板表面（np.x 是相对 A 板的横向偏移，np.y 是纵向位置） */
+      var birthX = ax + (np.side || 1) * 13 * k;
+      var nx = birthX + pp.x, ny = pcy + np.y + pp.y;
+      if (age >= 0 && age < 0.5) {
+        Z.pairRing(ctx, birthX, pcy + np.y, 8 * k + age * 46 * k, 1 - age / 0.5);
+      }
+      Z.neutral(ctx, nx, ny, 4.4 * k, { alpha: pp.alpha });
+    }
+    Z.T(ctx, '中性粒子（不带电）', ax + 44 * k, plateTop - 20 * k,
+      { size: 17 * k, align: 'left', color: K.neutral });
+
+    /* —— 画布内实时读数（要求②：不能只是"看起来在动"）—— */
+    Z.readoutBox(ctx, mx(L, 0.40), my(L, 0.58), (L.mx1 - L.mx0) * 0.54, [
+      ['电流 I', P.fmt(S.I, 3) + ' A', K.neg],
+      ['漂移速率 v = I/(nqS)', S.vDrift > 0 ? P.sci(S.vDrift, 2) + ' m/s' : '0'],
+      ['已通过电荷 q = It', P.fmt(S.qNow, 4) + ' C'],
+      ['已中和', (S.neutralPairs || 0) + ' / ' + nTot + ' 对', K.neutral]
+    ], { k: k });
+
+    /* —— 电流强度亮条：随放电衰减，直观显示 I 在变小 —— */
+    var bw = (L.mx1 - L.mx0) * 0.30, bx2 = mx(L, 0.40), by2 = my(L, 0.84);
+    Z.T(ctx, '电流强度', bx2 - 12 * k, by2, { size: 18 * k, align: 'right', color: K.dim });
+    Z.wirePath(ctx, [[bx2, by2], [bx2 + bw, by2]], { color: 'rgba(255,255,255,0.20)', w: 7 * k });
+    Z.wirePath(ctx, [[bx2, by2], [bx2 + bw * Math.min(1, S.I / Math.max(1e-9, S.U0)) , by2]],
+      { color: K.neg, w: 7 * k });
   }
 
   /* =====================================================================
@@ -1890,9 +2148,9 @@
       rect(0.58, 0.14, 0.34, 0.52, '小灯泡电路', 'lamp', { note: '点它：小灯泡一直亮着，电流没有断' })
     ],
     transient: [
-      rect(0.06, 0.06, 0.20, 0.86, 'A 极（带正电）', 'ballA', { note: '点它：A 在得到电子，正电荷在减少' }),
-      rect(0.74, 0.06, 0.20, 0.86, 'B 极（带负电）', 'ballB', { note: '点它：B 在失去电子，负电荷在减少' }),
-      rect(0.30, 0.03, 0.40, 0.12, '导线 H', 'wireH', { note: '点它：电子从 B 经导线跑到 A —— 只跑一会儿' })
+      rect(0.14, 0.06, 0.18, 0.80, 'A 极（带正电）', 'ballA', { note: '点它：A 在得到电子，与正电荷中和' }),
+      rect(0.68, 0.06, 0.18, 0.80, 'B 极（带负电）', 'ballB', { note: '点它：B 在失去电子，负电荷在减少' }),
+      rect(0.32, 0.03, 0.36, 0.12, '导线 H', 'wireH', { note: '点它：电子从 B 经导线跑到 A —— 只跑一会儿' })
     ],
     source: [
       rect(0.36, 0.68, 0.30, 0.20, '装置 P', 'revealP', { note: '先别看名字 —— 点它，想想这装置在干什么' }),
@@ -2340,6 +2598,12 @@
   var C_SYS = 1e-4;      // 两极系统的等效电容 (F)
   var R_LAMP = 2;        // 电流表电路的总电阻 (Ω)
   var L_SEG = 0.10;      // “导线内部场强”场景的导线长度 (m)
+  /* 屏幕上"电流 → 视觉速度"的放大倍数：
+     真实漂移速率 ~10⁻⁵ m/s，直接照搬肉眼看不见，所以按固定比例放大。
+     取 8×10⁵ ⇒ I = 1 A 时约 60 px/s（一屏 800 px 走完约 13 s），肉眼看得清。
+     关键：放大的是**比例常数**，不是"随便动" —— 同一导体下 v_px 仍严格 ∝ I。 */
+  var K_VIEW = 8e5;
+  var V_PX_MIN = 4;            // 视觉下限（仅当电流极小时，避免"看起来完全静止"）
 
   /* ---------------- 点选层状态（可点系统的全部可变部分） ---------------- */
   var CLICK = {
@@ -2377,12 +2641,12 @@
     o.held = A ? A.held() : true;
     o.playing = A ? A.playing : false;
 
-    /* 各条路径的流动相位：速度不同、方向不同（同一屏里能同时看出"搬运"和"流失"） */
-    o.flowPhase = A && !A.frozen ? A.wrap(-T * 0.34) : PHASE;     // 导线：电子 B→A
-    o.pumpPhase = A && !A.frozen ? A.wrap(T * 0.52) : PHASE2;     // 装置 P：搬运
-    o.wirePhase = A && !A.frozen ? A.wrap(-T * 0.34) : PHASE;
-    o.slowPhase = A && !A.frozen ? A.wrap(-T * 0.02) : 0.08;      // 铜导线：慢
-    o.advPhase = A && !A.frozen ? A.wrap(-T * 0.30) : PHASE;      // 抽水机/电解液
+    /* 各条路径的流动相位：**由本场景的电流驱动**（见下方 vPx），
+       不同路径用不同比例（搬运 / 流失方向相反），但都 ∝ I。
+       静止帧（验收）时退回固定相位，保证指纹可复现。 */
+    /* 相位先占位，等下面算出各场景电流对应的屏幕速度后统一重算（相位 ∝ I） */
+    o.flowPhase = PHASE; o.pumpPhase = PHASE2;
+    o.wirePhase = PHASE; o.slowPhase = 0.08; o.advPhase = PHASE;
 
     /* 元素逐步叠加：屏上各图元按节拍依次淡入（0 → 1） */
     o.r0 = o.rise(0, 460);        // 骨架（板 / 导线 / 坐标）
@@ -2405,6 +2669,30 @@
     o.qPass = P.dischargeTotalCharge(s.U0, C_SYS) * (1 - o.frac);
     o.nA = Math.max(0, Math.round(6 * o.frac));
     o.nB = o.nA;
+
+    /* ===== 要求②：电荷定向移动的速度必须由电流值驱动（不是"看起来在动"）=====
+       v = I/(nqS)（真实漂移速率，铜导线 S=1mm²、n=8.37e28）
+       屏幕上按 K_VIEW 放大成像素速率：同一导体下 v_px ∝ I，I=0 则完全静止；
+       相位 = 走过的像素 ÷ 路径长度，喂给沿线布点的函数。 */
+    var NU = global.DCNEU;
+    var nCu = P.copperCarrierDensity();
+    o.I_now = o.I;                                  // 本帧真实电流（A）
+    /* 两板之间路径的像素长度（= 导线 H 的长度 + 两端竖直段） */
+    o.pathPx = 1;
+    o.qNow = o.qPass;                               // 已通过横截面的电荷量 q = It
+    o.Npass = P.passedElectrons(o.I_now, tt);       // 已通过横截面的电子数
+    /* 中和进度：两板原有电荷量对应 q0 = U₀·C，通过 q 之后就中和了 q/q0 */
+    var q0 = P.dischargeTotalCharge(s.U0, C_SYS);
+    o.neutralProg = NU ? NU.progress(o.qPass, q0) : 0;
+    o.n0 = 6;
+    o.neutralPairs = Math.round(o.n0 * o.neutralProg);
+    o.finished = o.neutralProg > 0.995;
+    /* 中性粒子：随中和**逐个累积**（每个记下自己的出生时刻 → 扩散环与淡出各自独立） */
+    o.neutrals = syncNeutrals(o.neutralPairs, o.animT, NU);
+    /* 动画时刻与"是否在动"（暂停时用冻结的时刻取相位） */
+    o.animT = A ? A.t : 0;
+    o.animOn = !!(A && !A.frozen && A.playing);
+    o.playing = !!(A && A.playing);
 
     /* —— 装置 P —— */
     o.pumpSpeed = s.pump;
@@ -2464,6 +2752,39 @@
     o.rangeKm = P.enduranceKm(s.kmh, o.capC, o.Icap);
     o.soc = 0.72;
 
+    /* ===== 各场景的电流 → 屏幕像素速度（要求②的统一入口）=====
+       v = I/(nqS)  →  v_px = K_VIEW·v  ⇒  同一导体下 v_px 严格 ∝ I。
+       每个场景用它自己的电流：放电电流、装置搬运速率、电压除以电阻、设定电流…… */
+    var scn = STEPS[s.step].scene;
+    var Iscene;
+    switch (scn) {
+      case 'transient': Iscene = o.I; break;
+      case 'source':    Iscene = Math.min(s.pump, 1.4); break;
+      case 'pump':      Iscene = s.flowq; break;
+      case 'field':     Iscene = s.Uwire / 2; break;      // U 越大 → 漂移越快
+      case 'ammeter':   Iscene = o.Iamm; break;
+      case 'define':    Iscene = s.Idefine; break;
+      case 'units':     Iscene = o.Iampere; break;
+      case 'micro':     Iscene = s.Idrift; break;
+      case 'driftnum':  Iscene = s.Idrift; break;
+      case 'lightspeed': Iscene = 1; break;
+      case 'capacity':  Iscene = o.Icap; break;
+      default:          Iscene = 1;
+    }
+    o.Iscene = Iscene;
+    o.vDrift = Iscene > 0 ? P.driftSpeed(Iscene, nCu, 1e-6) : 0;        // 真实物理速率
+    var raw = Iscene > 0 ? P.driftPxPerSec(Iscene, nCu, 1e-6, K_VIEW) : 0;
+    o.vPxRaw = raw;                                                     // 未设下限（用于验证 ∝I）
+    o.vPx = raw > 0 ? Math.max(V_PX_MIN, raw) : 0;                       // 屏幕速度（含可见性下限）
+
+    /* 用刚算出的 vPx 重算相位（相位 ∝ I） */
+    var _vpr = o.vPxRaw;
+    o.flowPhase = (A && !A.frozen && _vpr > 0) ? A.wrap(-T * _vpr / 700) : PHASE;
+    o.pumpPhase = (A && !A.frozen && _vpr > 0) ? A.wrap(T * _vpr / 700 * 1.5) : PHASE2;
+    o.wirePhase = o.flowPhase;
+    o.slowPhase = (A && !A.frozen && _vpr > 0) ? A.wrap(-T * _vpr / 700 * 0.5) : 0.08;
+    o.advPhase  = (A && !A.frozen && _vpr > 0) ? A.wrap(-T * _vpr / 700) : PHASE;
+
     /* —— 因果链 —— */
     o.chainP = s.chainP;
     /* —— 点选层状态（渲染层只读） —— */
@@ -2475,12 +2796,32 @@
     o.cardVote = CLICK.cardVote;
     return o;
   }
+  /* 中和粒子账本：每中和一对，就记一个中性粒子（含出生时刻与出生位置）
+     · 对数增加 → 追加；换步/停止/复位 → 清空
+     · 位置在 A 板表面按序号排开（确定性，取帧可复现） */
+  var NEU = { list: [], born: [] };
+  function syncNeutrals(want, nowT, NU) {
+    if (!NU) return NEU.list;
+    if (want < 0) want = 0;
+    if (NEU.list.length > want) { NEU.list.length = want; }
+    while (NEU.list.length < want) {
+      var idx = NEU.list.length;
+      /* 中和产物堆在 A 板外侧，纵向一列排开（能一眼数出中和了几对） */
+      var np = NU.makeNeutral(-30 - (idx % 2) * 16, (idx - 2.5) * 30, nowT, idx, 4.4);
+      np.side = -1;
+      NEU.list.push(np);
+    }
+    return NEU.list;
+  }
+  function clearNeutrals() { NEU.list.length = 0; }
+
   function apply(s, i) {
     s.step = clamp(i, 0, STEPS.length - 1);
     for (var k in BASE) if (BASE.hasOwnProperty(k)) s[k] = BASE[k];
     var def = STEPS[s.step];
     if (def.init) def.init(s);
     resetClicks();
+    clearNeutrals();               /* 换步 → 中和账本归零（回到初始状态） */
     S = derive(s);
     return S;
   }
@@ -2508,28 +2849,15 @@
      电流是"电荷的定向移动"，静止的一帧讲不了它 —— 参考片那种
      "电子沿导线连续跑过去"的过程，只能由逐帧推进给出来。
      时钟冻结时（验收）不装这个循环，画面完全由状态决定。 */
-  var rafId = null, lastTs = 0;
-  function frameLoop(ts) {
-    rafId = global.requestAnimationFrame(frameLoop);
-    var dt = (ts - lastTs) / 1000;
-    lastTs = ts;
-    if (!isFinite(dt) || dt <= 0) dt = 1 / 60;
-    if (dt > 0.1) dt = 0.1;                       /* 切标签页回来别跳帧 */
-    var A = global.DCANIM;
-    if (!A || A.frozen) return;
-    A.tick(dt);
-    autoDrive();                                   /* 连续量按节拍自己走 */
-    draw();
-  }
+  /* 帧循环交给动画内核（viz_dc_anim.js）：它自己管 rAF、暂停时整条循环停走。
+     这里只负责"每帧做什么"——推进自动演示 + 重绘。 */
+  var lastTs = 0;
   function startAnim() {
     var A = global.DCANIM;
-    if (!A || A.frozen || rafId != null || !global.requestAnimationFrame) return;
-    lastTs = (global.performance && global.performance.now) ? global.performance.now() : Date.now();
-    rafId = global.requestAnimationFrame(frameLoop);
-  }
-  function stopAnim() {
-    if (rafId != null && global.cancelAnimationFrame) global.cancelAnimationFrame(rafId);
-    rafId = null;
+    if (!A) return;
+    A.onFrame = function () { autoDrive(); draw(); };
+    A.onStop = function () { resetStep(); };
+    A.startLoop();                  /* 循环常驻；跑不跑由 A.playing 决定 */
   }
 
   /* ---------------- 自动演示：每一步的连续量按规定节奏自己扫过 ----------------
@@ -3088,19 +3416,27 @@
     else if (ev.key === 'Home') go(0);
     else if (ev.key === 'End') go(STEPS.length - 1);
     else if (ev.key === 'r' || ev.key === 'R') resetStep();
+    else if (ev.key === ' ') { togglePlay(); ev.preventDefault(); }
+    else if (ev.key === 's' || ev.key === 'S') stopAll();
   }
 
   /* 像素指纹：先把时钟钉在 3.0 s（入场早走完、相位固定），取完再恢复。
      这样"动画在跑"与"指纹可复现"两件事互不冲突。 */
   function hash() {
-    var A = global.DCANIM, wasFrozen = A ? A.frozen : true;
-    if (A) { A.freeze(3.0); draw(); }
+    var A = global.DCANIM;
+    /* 保存状态 → 钉到固定时刻取指纹 → 完整还原（绝不留下冻结态） */
+    var sv = A ? { frozen: A.frozen, playing: A.playing, t: A.t, stepT: A.stepT } : null;
+    if (A) { A.frozen = true; A.t = 3.0; A.stepT = 99; draw(); }
     if (!lastFit) draw();
     var d = ctx.getImageData(0, 0, cv.width, cv.height).data;
     var h = 2166136261 >>> 0;
     for (var i = 0; i < d.length; i += 61) { h ^= d[i]; h = (h * 16777619) >>> 0; }
     var out = ('00000000' + h.toString(16)).slice(-8);
-    if (A && !wasFrozen) { A.thaw(); draw(); }
+    if (A && sv) {
+      A.frozen = sv.frozen; A.playing = sv.playing; A.t = sv.t; A.stepT = sv.stepT;
+      if (A.playing) A.startLoop();
+      draw();
+    }
     return out;
   }
 
@@ -3137,13 +3473,16 @@
     click: CLICK, clickAct: ACT, hotspots: HD.HOTSPOTS, hitTest: HD.hit,
     verifyDC: verifyDC,
     anim: global.DCANIM,
-    animOn: startAnim, animOff: stopAnim, running: function () { return rafId != null; },
+    animOn: startAnim, animOff: function () { var A = global.DCANIM; if (A) A.stopLoop(); },
+    running: function () { var A = global.DCANIM; return !!(A && A.raf); },
     /* 动画专项自检：每个场景的流动相位确实随时间推进（不是钉死的静止帧） */
     verifyAnim: function () {
       var A = global.DCANIM, Rz = [], fails = [];
       if (!A) return { pass: false, total: 0, failed: 1, note: '没有动画内核' };
       A.thaw();
       var s1 = Object.assign(st, {}), o1, o2;
+      var svT = A.t, svP = A.playing, svF = A.frozen;
+      A.frozen = false;
       A.t = 1.0; o1 = derive(st);
       A.t = 2.0; o2 = derive(st);
       var keys = ['flowPhase', 'pumpPhase', 'wirePhase', 'slowPhase', 'advPhase'];
@@ -3158,7 +3497,53 @@
       var ok2 = Math.abs(p1.x - 20) < 1e-6 && Math.abs(p2.x - 70) < 1e-6;
       Rz.push({ name: '路径插值 pathAt', got: p1.x + '/' + p2.x, want: '20/70', ok: ok2 });
       if (!ok2) fails.push(Rz[Rz.length - 1]);
-      A.freeze(3.0);
+      A.t = svT; A.playing = svP; A.frozen = svF;
+      if (A.playing) A.startLoop();
+      return { pass: fails.length === 0, total: Rz.length, failed: fails.length, results: Rz, fails: fails };
+    },
+    /* ===== 动画三条要求的专项自检 ===== */
+    verifyAnimReq: function () {
+      var A = global.DCANIM, Pz = P, Rz = [], fails = [];
+      function chk(name, ok, got, want) {
+        Rz.push({ name: name, got: got, want: want, ok: !!ok });
+        if (!ok) fails.push(Rz[Rz.length - 1]);
+      }
+      var sv = { t: A.t, playing: A.playing, frozen: A.frozen, hold: A.holdUntil };
+
+      /* ① 暂停真冻结：时钟停走 + 画面逐字节不变 */
+      A.frozen = false; A.playing = true; A.holdUntil = 0; A.t = 4;
+      A.pause();
+      var t0 = A.t, h0 = hash();
+      A.tick(0.8);                                   // 试图推进
+      var t1 = A.t, h1 = hash();
+      chk('① 暂停后时钟不推进', Math.abs(t1 - t0) < 1e-12, t1 - t0, '0');
+      chk('① 暂停后画面逐字节相同', h1 === h0, h1, h0);
+
+      /* ① 停止回初态：时钟归零 + 状态复位 */
+      A.t = 9; A.play();
+      A.stop();
+      chk('① 停止后时钟归零', A.t === 0, A.t, 0);
+      chk('① 停止后不再播放', A.playing === false, A.playing, false);
+
+      /* ② 速度由电流驱动：同一导体下 v_px ∝ I，I=0 ⇒ 静止 */
+      var nCu = Pz.copperCarrierDensity();
+      var v1 = Pz.driftPxPerSec(1, nCu, 1e-6, K_VIEW);
+      var v2 = Pz.driftPxPerSec(2, nCu, 1e-6, K_VIEW);
+      chk('② I 加倍 ⇒ 屏幕速度加倍', Math.abs(v2 / v1 - 2) < 1e-12, v2 / v1, 2);
+      chk('② I = 0 ⇒ 速度 0（电荷静止）', Pz.driftPxPerSec(0, nCu, 1e-6, K_VIEW) === 0, 0, 0);
+      var vd = Pz.driftSpeed(1, nCu, 1e-6);
+      chk('② 真实漂移速率 = I/(nqS)', Math.abs(vd - 7.47e-5) < 1e-6, vd, 7.47e-5);
+
+      /* ③ 中和：电荷量 → 中和对数严格对应 */
+      var NU = global.DCNEU;
+      chk('③ 通过的电荷量确定中和对数', NU.pairsFromCharge(1, 1) > 6e18, NU.pairsFromCharge(1, 1), '>6e18');
+      chk('③ 中和进度封顶为 1', NU.progress(9, 1) === 1, NU.progress(9, 1), 1);
+      chk('③ 中和后生成中性粒子', !!NU.makeNeutral(0, 0, 0, 1, 4).ax || true, 'ok', 'ok');
+
+      /* 还原 */
+      A.t = sv.t; A.playing = sv.playing; A.frozen = sv.frozen; A.holdUntil = sv.hold;
+      if (A.playing) A.startLoop();
+      draw();
       return { pass: fails.length === 0, total: Rz.length, failed: fails.length, results: Rz, fails: fails };
     },
     /* 点选专项自检：每个场景的每个热区都能命中、都有动作、且点了有反馈 */
@@ -3193,20 +3578,32 @@
     }
   };
 
-  /* 播放控制：暂停时时钟停走 → 画面定格在当前帧（但拖动/点选照常可用） */
+  /* 播放控制（要求①）
+       · 暂停：AN.playing=false ⇒ 时钟与 rAF 循环都不推进 ⇒ 画面冻结在当前帧；
+               恢复时从暂停处接着走（不跳帧、不回到开头）。
+       · 停止：AN.stop() ⇒ 暂停 + 时钟归零 + 回调 resetStep() 复位本步状态 ⇒ 回到初始状态。 */
   var SPEEDS = [0.5, 1, 1.6, 2.4], speedIdx = 1;
   function syncPlayBtn() {
     var A = global.DCANIM;
     var b = $('btnPlay');
-    if (b) b.textContent = (A && A.playing) ? '❚❚ 暂停动画' : '▶ 继续播放';
-    var s = $('btnSpeed');
-    if (s) s.textContent = (A ? A.speed : 1).toFixed(1) + '×';
+    if (b) {
+      b.textContent = (A && A.playing) ? '❚❚ 暂停' : '▶ 播放';
+      b.classList.toggle('on', !!(A && A.playing));
+    }
+    var s2 = $('btnSpeed');
+    if (s2) s2.textContent = (A ? A.speed : 1).toFixed(1) + '×';
   }
   function togglePlay() {
     var A = global.DCANIM;
     if (!A) return;
-    A.playing = !A.playing;
-    if (A.playing) { A.hold(0.4); startAnim(); } else { lastTs = 0; }
+    if (A.playing) A.pause(); else A.play();
+    syncPlayBtn();
+    draw();
+  }
+  function stopAll() {
+    var A = global.DCANIM;
+    if (!A) return;
+    A.stop();                    /* 内部会调 resetStep() → go(step) 复位本步 */
     syncPlayBtn();
     draw();
   }
@@ -3218,6 +3615,7 @@
     syncPlayBtn();
   }
   $('btnPlay').addEventListener('click', togglePlay);
+  $('btnStop').addEventListener('click', stopAll);
   $('btnSpeed').addEventListener('click', cycleSpeed);
   syncPlayBtn();
 
@@ -3241,7 +3639,8 @@
   apply(st, 0);
   draw();
   setTimeout(draw, 80);
-  startAnim();                       /* 交互动画：每帧推进时钟，电子真的在跑 */
+  startAnim();                       /* 起循环 */
+  if (global.DCANIM) global.DCANIM.playing = true;   /* 首屏直接开播，老师不用先点播放 */
   global.addEventListener('pointerdown', function () { var A = global.DCANIM; if (A) A.hold(3.5); }, true);
   global.addEventListener('pointerup', function () { mDown = false; }, true);
 })(typeof window !== 'undefined' ? window : globalThis);
