@@ -267,6 +267,33 @@
      注意：它不是外部可调的旋钮；电源只是把电子搬回去，搬多快由电路决定。 */
   function pumpRateEquals(I) { return I; }
 
+  /* ---------------- 六·C 方向判定（恒定电场里的三件事必须自洽）----------------
+     参考约定：
+       · 电流方向 = 正电荷定向移动的方向（人为约定）
+       · 导体内部电场 E 的方向 = 高电势 → 低电势
+       · 正电荷受力沿 E 方向（顺电场走）；负电荷受力逆 E（逆电场走）
+     所以同一根导线里：
+         电流 I 的方向  ==  E 的方向  ==  正电荷运动方向
+         自由电子（负电荷）运动方向  ==  -E  ==  与电流反向
+     电解液里：
+         正离子顺着 E 走，负离子逆着 E 走 —— 但两者形成的电流方向**相同**（都沿 E）
+  */
+  /* 电流方向与电场方向的关系：永远同向 */
+  function currentDirAlongE() { return 1; }
+  /* 给定 E 的方向（+1 向右 / -1 向左），返回载流子的运动方向 */
+  function carrierDirBySign(sign, eDir) { return sign > 0 ? eDir : -eDir; }
+  /* 电流方向（由正电荷定义）：始终沿 E */
+  function currentDirFromE(eDir) { return eDir; }
+  /* 一个载流子对电流的贡献方向：负电荷逆 E 运动，产生的电流仍沿 E */
+  function contributionDir(sign, eDir) { return eDir; }
+  /* 恒压源两端：正极（高电势）是电流流出的那一端 */
+  function positiveTerminalSide(eDir) { return eDir > 0 ? 1 : -1; }
+  /* 电解液里两种离子同号电流的合成：方向相同，大小相加 */
+  function electrolyteCurrentDir(q1, q2, eDir) {
+    /* q1 为正离子电荷量（>0）、q2 为负离子电荷量（<0），两者都沿 E 产生电流 */
+    return eDir;
+  }
+
   /* ---------------- 七、瞬间电流（电容器放电，环节①） ---------------- */
   function rcDecay(U0, R, C, t) { return U0 * Math.exp(-t / (R * C)); }
   function rcCurrent(U0, R, C, t) { return (U0 / R) * Math.exp(-t / (R * C)); }
@@ -355,6 +382,17 @@
     chk('q = It：I=2 A、t=3 s ⇒ 6 C', passedCharge(2, 3), 6, 1e-12);
     chk('电子数 n = It/e', passedElectrons(1, 1), 1 / E_CHARGE, 1e-6);
 
+    /* —— 方向判定（步 4/5/6 与步 15 必须自洽）—— */
+    chk('电流方向 = 电场方向（恒压源外侧）', currentDirAlongE(), 1, 0);
+    chk('正电荷沿 E 运动', carrierDirBySign(+1, +1), +1, 0);
+    chk('负电荷逆 E 运动', carrierDirBySign(-1, +1), -1, 0);
+    chk('电子（负）运动方向与电流相反',
+      carrierDirBySign(-1, +1) === -currentDirFromE(+1) ? 1 : -1, 1, 0);
+    chk('正离子与负离子产生的电流同向',
+      contributionDir(+1, +1) === contributionDir(-1, +1) ? 1 : 0, 1, 0);
+    chk('电解液合电流方向 = 电场方向', electrolyteCurrentDir(1, -1, +1), +1, 0);
+    chk('E 向左时电流也向左', currentDirFromE(-1), -1, 0);
+
     /* —— 恒压电源链（本课前提）—— */
     chk('I = U/R：U=6 V、R=3 Ω ⇒ 2 A', currentFromU(6, 3), 2, 1e-12);
     chk('U 不变 ⇒ I 不变（恒定电流）', currentFromU(6, 3), currentFromU(6, 3), 0);
@@ -397,6 +435,9 @@
     transitTime: transitTime, fieldTime: fieldTime,
     driftPxPerSec: driftPxPerSec, passedCharge: passedCharge, passedElectrons: passedElectrons,
     accel: accel, peakSpeed: peakSpeed, avgDrift: avgDrift, steadyAvg: steadyAvg,
+    currentDirAlongE: currentDirAlongE, carrierDirBySign: carrierDirBySign,
+    currentDirFromE: currentDirFromE, contributionDir: contributionDir,
+    positiveTerminalSide: positiveTerminalSide, electrolyteCurrentDir: electrolyteCurrentDir,
     resistance: resistance, currentFromU: currentFromU, fieldFromU: fieldFromU,
     electrodeCharge: electrodeCharge, isSteady: isSteady, pumpRateEquals: pumpRateEquals,
     rcDecay: rcDecay, rcCurrent: rcCurrent, tauRC: tauRC, dischargeTotalCharge: dischargeTotalCharge,
@@ -782,15 +823,19 @@
   }
 
   /* ---------- 电池：蓝灰渐变长块 + 深蓝正极端 + 接线柱 ----------
-     cx,cy 是中心；len 是总长；h 是高度；horiz=true 横放 */
+     cx,cy 中心；len 总长；h 高度。
+     flip = false（默认）：**正极（+）在右**
+     flip = true：正极（+）在左
+     正极 = 高电势端 = 电流流出的那一端（外部电路里电流从正极流出）。 */
   function battery(ctx, cx, cy, len, h, o) {
     o = o || {};
-    var k = o.k || 1, horiz = o.horiz !== false;
+    var k = o.k || 1, horiz = o.horiz !== false, flip = !!o.flip;
     var posW = h * 0.62;                     // 正极端（深蓝方块）宽度
     var mainLen = len - posW;
     ctx.save();
     ctx.translate(cx, cy);
     if (!horiz) ctx.rotate(-Math.PI / 2);
+    if (flip) ctx.scale(-1, 1);              // 左右镜像 ⇒ 正极跑到左边
     /* 本体（主色渐变） */
     var g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
     g.addColorStop(0, K.batHi); g.addColorStop(0.45, K.batMid); g.addColorStop(1, K.batLo);
@@ -804,10 +849,13 @@
     ctx.fillStyle = K.batLo;
     ctx.fillRect(-len / 2 + mainLen, -h / 2, posW, h);
     T(ctx, '+', -len / 2 + mainLen + posW / 2, 0, { size: h * 0.42, align: 'center', color: '#FFFFFF' });
-    /* 接线柱 */
+    /* 负极端标一个 − */
+    T(ctx, '−', -len / 2 + mainLen * 0.18, 0, { size: h * 0.34, align: 'center', color: 'rgba(255,255,255,0.75)' });
+    /* 接线柱（正极端外侧） */
     ctx.fillStyle = '#7A7A7A';
     ctx.fillRect(len / 2, -h * 0.16, h * 0.22, h * 0.32);
     ctx.restore();
+    return { plusSide: flip ? -1 : +1 };      // +1：正极在右；-1：正极在左
   }
 
   /* ---------- 电阻：蓝色扁块 + R 标签 ---------- */
@@ -1240,8 +1288,11 @@
     var rx = W * 0.72, yT = H * 0.24, yB = H * 0.56, bx = rx - 90 * k;
     D(ctx, S.r1, function () {
       Z.wirePath(ctx, [[bx - 66 * k, yT], [rx + 66 * k, yT], [rx + 66 * k, yB], [bx - 66 * k, yB], [bx - 66 * k, yT]], { w: 3 * k });
-      Z.battery(ctx, bx, yB, 96 * k, 34 * k, { k: k, horiz: true });
-      Z.T(ctx, '电池', bx, yB + 36 * k, { size: 19 * k, align: 'center', color: K.dim });
+      var bt = Z.battery(ctx, bx, yB, 96 * k, 34 * k, { k: k, horiz: true });
+      Z.T(ctx, '电池', bx, yB + 40 * k, { size: 19 * k, align: 'center', color: K.dim });
+      /* 极性标注：+ 在右、− 在左（电池外部电流从 + 流出） */
+      Z.T(ctx, '+', bx + 56 * k, yB - 30 * k, { size: 22 * k, align: 'center', color: K.text });
+      Z.T(ctx, '−', bx - 50 * k, yB - 30 * k, { size: 22 * k, align: 'center', color: K.dim });
     });
     var lx = rx + 66 * k, ly = (yT + yB) / 2;
     D(ctx, S.r2, function () {
@@ -1258,12 +1309,15 @@
         ctx.fillStyle = g; ctx.beginPath(); ctx.arc(lx, ly, 62 * k, 0, Math.PI * 2); ctx.fill();
       }
       ctx.restore();
-      /* 电流：一圈闭合回路上的电子点，真的在跑（这是本页的主角动作） */
-      var loop = [[bx + 48 * k, yT], [rx + 66 * k, yT], [rx + 66 * k, yB],
-                  [bx - 66 * k, yB], [bx - 66 * k, yT], [bx + 48 * k, yT]];
+      /* 电子：从电池负极（左）出发 → 左竖线上行 → 上横线向右 → 右竖线下行 → 回到正极（右）
+         路径顺序 = 电子真实运动方向（相位取正号后，方向就必然对） */
+      var loop = [[bx - 52 * k, yB], [bx - 66 * k, yB], [bx - 66 * k, yT],
+                  [rx + 66 * k, yT], [rx + 66 * k, yB], [bx + 52 * k, yB]];
       Z.chargeFlow(ctx, loop, 14, S.flowPhase, { kind: 'neg', r: 4.4 * k });
-      /* 跑在前头的几个带拖尾，看得清方向 */
       Z.trailDot(ctx, loop, S.flowPhase, { r: 5, k: k });
+      /* 电流方向（约定方向）：与电子相反 —— 从 + 端流出，沿外电路回到 − 端 */
+      Z.T(ctx, '电流方向（与电子相反）', rx + 66 * k + 10 * k, yT + 46 * k,
+        { size: 17 * k, align: 'right', color: K.negHi });
     });
     D(ctx, S.r3, function () {
       Z.T(ctx, '小灯泡一直亮：电流没有断', rx, yB + 78 * k, { size: 19 * k, align: 'center', color: K.text });
@@ -1402,23 +1456,33 @@
       Z.wirePath(ctx, [[ax, yB], [bx1, yB]], { w: 3 * k });
       Z.wirePath(ctx, [[ax, yB], [ax, pcy + ph / 2]], { w: 3 * k });
       Z.wirePath(ctx, [[bx1, yB], [bx1, pcy + ph / 2]], { w: 3 * k });
-      Z.battery(ctx, bcx, yB, bw, bh, { k: k });
-      Z.T(ctx, S.revealedP ? '电池（电源）' : '某种装置', bcx, yB + 38 * k, { size: 19 * k, align: 'center', color: K.dim });
+      /* 电池正极朝 A（A 带正电 = 电源的正极那一侧） */
+      Z.battery(ctx, bcx, yB, bw, bh, { k: k, flip: true });
+      Z.T(ctx, S.revealedP ? '电池（电源）' : '某种装置', bcx, yB + 40 * k, { size: 19 * k, align: 'center', color: K.dim });
+      Z.T(ctx, '＋', ax + 26 * k, pcy - ph / 2 - 20 * k, { size: 22 * k, align: 'center', color: K.text });
+      Z.T(ctx, '−', bx1 - 26 * k, pcy - ph / 2 - 20 * k, { size: 22 * k, align: 'center', color: K.dim });
     });
     /* ② 极板上的电荷（搬运够 = 不变；不够 = 一格一格掉） */
     D(ctx, S.r1, function () {
       Z.chargeColumn(ctx, ax - 12 * k, pcy - ph / 2 + 24 * k, pcy + ph / 2 - 24 * k, Math.max(1, S.nA), 'pos', { r: 4.6 * k });
       Z.chargeColumn(ctx, bx1 + 12 * k, pcy - ph / 2 + 24 * k, pcy + ph / 2 - 24 * k, Math.max(1, S.nB), 'neg', { r: 4.6 * k });
     });
-    /* ③ 三条通道同时有电荷在跑：
-          上导线 B→A（电子流失）、下导线 A→装置→B（装置在搬运）
-          稳态时两者速率一致 ⇒ 画面上"来"和"去"看着是同一个节奏 */
+    /* ③ 两套方向必须同时讲清（这是本节最容易错的地方）：
+          · 外电路（上导线）：电子 B→A；**电流方向 A→B**（与电子相反）
+          · 电源内部（下支路）：电子 A→装置→B（被电源搬回去）；电流方向 B→A
+         路径顺序一律按"电子真实运动方向"写，相位取正号 ⇒ 画面方向必然正确 */
     D(ctx, S.r2, function () {
       var dens = S.steady ? 6 : Math.max(2, Math.round(7 * Math.min(1, S.pumpSpeed / 1.0)));
+      /* 外电路：电子 B → A */
       Z.chargeFlow(ctx, [[bx1, yT], [ax, yT]], dens, S.flowPhase, { kind: 'neg', r: 4.4 * k });
       Z.trailDot(ctx, [[bx1, yT], [ax, yT]], S.flowPhase, { r: 5, k: k });
+      /* 电源内部：电子 A → 装置 → B */
       Z.chargeFlow(ctx, [[ax, yB], [bcx - bw / 2, yB]], 3, S.pumpPhase, { kind: 'neg', r: 4.4 * k });
       Z.chargeFlow(ctx, [[bcx + bw / 2, yB], [bx1, yB]], 3, S.pumpPhase, { kind: 'neg', r: 4.4 * k });
+      /* 电流方向：外电路 A→B（标在上导线），电源内部 B→A（标在下支路） */
+      Z.T(ctx, '电流方向 →', (ax + bx1) / 2, yT - 24 * k, { size: 18 * k, align: 'center', color: K.negHi });
+      Z.T(ctx, '← 内部电流方向', (ax + bx1) / 2, yB - 26 * k, { size: 18 * k, align: 'center', color: K.negHi });
+      Z.T(ctx, '电子 B → A', (ax + bx1) / 2, yT + 22 * k, { size: 17 * k, align: 'center', color: K.neg });
       /* 搬运速率指示：装置处一圈随搬运速率变强的光晕 */
       if (S.Isteady > 0.02) {
         var g = ctx.createRadialGradient(bcx, yB, 0, bcx, yB, bw * 0.75);
@@ -1468,14 +1532,23 @@
     });
     Z.T(ctx, '抽水机', lx - tw * 0.72, (hiY + loY) / 2, { size: 20 * k, align: 'center', color: K.text });
 
-    /* 右：电源回路 */
+    /* 右：电源回路（恒压源在左竖边，正极在上 = 高电势端） */
     var rx = mx(L, 0.76), ry1 = my(L, 0.20), ry2 = my(L, 0.72);
     Z.wirePath(ctx, [[rx - 84 * k, ry1], [rx + 84 * k, ry1], [rx + 84 * k, ry2], [rx - 84 * k, ry2], [rx - 84 * k, ry1]], { w: 3 * k });
-    Z.battery(ctx, rx - 84 * k, (ry1 + ry2) / 2, 92 * k, 34 * k, { k: k });
-    Z.T(ctx, '电源', rx - 84 * k, (ry1 + ry2) / 2 + 40 * k, { size: 20 * k, align: 'center', color: K.dim });
-    Z.T(ctx, '高电势', rx + 30 * k, ry1 - 20 * k, { size: 19 * k, align: 'center', color: K.dim });
-    Z.T(ctx, '低电势', rx + 30 * k, ry2 + 24 * k, { size: 19 * k, align: 'center', color: K.dim });
-    Z.chargeFlow(ctx, [[rx - 84 * k, ry2], [rx - 84 * k, ry1], [rx - 40 * k, ry1]], 4, 1 - S.flowPhase, { kind: 'pos', r: 4.4 * k, glow: false });
+    /* 电池竖放在左竖边：horiz=false ⇒ 正极朝上（高电势端） */
+    Z.battery(ctx, rx - 84 * k, (ry1 + ry2) / 2, 92 * k, 34 * k, { k: k, horiz: false });
+    Z.T(ctx, '电源', rx - 84 * k - 34 * k, (ry1 + ry2) / 2, { size: 20 * k, align: 'right', color: K.dim });
+    Z.T(ctx, '高电势（+）', rx + 30 * k, ry1 - 20 * k, { size: 19 * k, align: 'center', color: K.dim });
+    Z.T(ctx, '低电势（−）', rx + 30 * k, ry2 + 26 * k, { size: 19 * k, align: 'center', color: K.dim });
+    /* 电源内部：正电荷从 −（下）被搬到 +（上）—— 这才是"维持差额"的动作 */
+    Z.chargeFlow(ctx, [[rx - 84 * k, ry2 - 10 * k], [rx - 84 * k, ry1 + 10 * k]], 4, S.pumpPhase, { kind: 'pos', r: 4.4 * k, glow: false });
+    /* 外电路：电子从 − 端出发，经右竖边回到 + 端（与电流方向相反） */
+    Z.chargeFlow(ctx, [[rx - 84 * k, ry2], [rx + 84 * k, ry2], [rx + 84 * k, ry1], [rx - 84 * k, ry1]],
+      7, S.flowPhase, { kind: 'neg', r: 4.0 * k });
+    /* 电流方向（外电路）：从 + 端流出，沿外电路回到 − 端 */
+    Z.T(ctx, '电流方向（外电路）', rx + 96 * k, (ry1 + ry2) / 2 - 10 * k, { size: 17 * k, align: 'left', color: K.negHi });
+    Z.T(ctx, '电源内部：把正电荷从 − 搬到 +', rx - 84 * k - 92 * k, (ry1 + ry2) / 2 - 46 * k,
+      { size: 17 * k, align: 'center', color: K.text });
   }
 
   /* =====================================================================
@@ -1506,16 +1579,22 @@
     var rx = mx(L, 0.74), ry = my(L, 0.26), rw = (L.mx1 - L.mx0) * 0.42;
     D(ctx, S.r1, function () {
       Z.wirePath(ctx, [[rx - rw / 2, ry], [rx + rw / 2, ry]], { w: 4 * k });
-      for (var i = 0; i < 5; i++) {
-        var xx = rx - rw / 2 + rw * (i + 0.5) / 5;
-        Z.wirePath(ctx, [[xx - 16 * k, ry - 30 * k], [xx + 16 * k, ry - 30 * k]], { color: K.neg, w: 2.2 * k });
+      /* 电场箭头：带箭头头，方向明确（导线内 E 由高电势端指向低电势端） */
+      for (var i = 0; i < 4; i++) {
+        var xx = rx - rw / 2 + rw * (i + 0.5) / 4;
+        Z.wirePath(ctx, [[xx - 20 * k, ry - 32 * k], [xx + 20 * k, ry - 32 * k]], { color: K.neg, w: 2.2 * k });
+        Z.wirePath(ctx, [[xx + 8 * k, ry - 38 * k], [xx + 20 * k, ry - 32 * k], [xx + 8 * k, ry - 26 * k]], { color: K.neg, w: 2.2 * k });
       }
-      Z.M(ctx, 'E', rx + rw / 2 + 18 * k, ry - 30 * k, { size: 26 * k, color: K.neg });
+      Z.M(ctx, 'E', rx + rw / 2 + 26 * k, ry - 32 * k, { size: 26 * k, color: K.neg });
       Z.T(ctx, '电路中：内部 E ≠ 0', rx, ry + 42 * k, { size: 22 * k, align: 'center', color: K.neg });
     });
     D(ctx, S.r2, function () {
-      Z.chargeFlow(ctx, [[rx - rw / 2, ry], [rx + rw / 2, ry]], 7, S.flowPhase, { kind: 'neg', r: 4.6 * k });
-      Z.trailDot(ctx, [[rx - rw / 2, ry], [rx + rw / 2, ry]], S.flowPhase, { r: 5, k: k });
+      /* 电子带负电 ⇒ 受力与 E 相反 ⇒ 沿 E 的反方向运动（E 向右，电子向左） */
+      var ePath = [[rx + rw / 2, ry], [rx - rw / 2, ry]];
+      Z.chargeFlow(ctx, ePath, 7, S.flowPhase, { kind: 'neg', r: 4.6 * k });
+      Z.trailDot(ctx, ePath, S.flowPhase, { r: 5, k: k });
+      Z.T(ctx, '电子（逆 E）', rx - rw / 2 - 8 * k, ry + 26 * k, { size: 17 * k, align: 'right', color: K.neg });
+      Z.T(ctx, '电流方向（顺 E）', rx + rw / 2 + 8 * k, ry + 26 * k, { size: 17 * k, align: 'left', color: K.negHi });
     });
 
     Z.T(ctx, 'U = ' + P.fmt(S.Uwire, 1) + ' V，L = 0.10 m ⇒ E = ' + P.fmt(S.Ewire, 1) + ' V/m',
@@ -1661,8 +1740,11 @@
     });
     var x0 = mx(L, 0.04), x1 = mx(L, 0.96), yT = my(L, 0.16), yB = my(L, 0.62);
     Z.wirePath(ctx, [[x0, yT], [x1, yT], [x1, yB], [x0, yB], [x0, yT]], { w: 3 * k });
-    Z.battery(ctx, x0, (yT + yB) / 2, 92 * k, 34 * k, { k: k });
-    Z.T(ctx, 'U = ' + P.fmt(S.Uamm, 1) + ' V', x0 - 60 * k, (yT + yB) / 2, { size: 20 * k, align: 'center', color: K.dim });
+    /* 电源竖放在左竖边：正极朝上（上边为高电势） */
+    Z.battery(ctx, x0, (yT + yB) / 2, 92 * k, 34 * k, { k: k, horiz: false });
+    Z.T(ctx, 'U = ' + P.fmt(S.Uamm, 1) + ' V', x0 - 62 * k, (yT + yB) / 2, { size: 20 * k, align: 'center', color: K.dim });
+    Z.T(ctx, '＋', x0 - 26 * k, yT + 20 * k, { size: 20 * k, align: 'center', color: K.text });
+    Z.T(ctx, '−', x0 - 26 * k, yB - 20 * k, { size: 20 * k, align: 'center', color: K.dim });
     /* 电流表 */
     var acx = mx(L, 0.5), acy = yB, r = 26 * k;
     D(ctx, S.r2, function () {
@@ -1682,10 +1764,14 @@
       ctx.restore();
       Z.T(ctx, 'A', acx, acy + r * 0.5, { size: 20 * k, align: 'center', color: K.text });
     });
-    /* 电流：整条回路上的电子在跑（含电流表这一段） */
+    /* 电子：从电源 − 端出发 → 下边向右 → 右边向上 → 上边向左 → 回到 + 端
+       （路径顺序 = 电子真实运动方向；电流方向与之相反） */
     D(ctx, S.r1, function () {
-      Z.chargeFlow(ctx, [[x0, yT], [x1, yT], [x1, yB]], 9, S.flowPhase, { kind: 'neg', r: 4.4 * k });
-      Z.trailDot(ctx, [[x0, yT], [x1, yT], [x1, yB]], S.flowPhase, { r: 5, k: k });
+      var loop = [[x0, yB], [x1, yB], [x1, yT], [x0, yT]];
+      Z.chargeFlow(ctx, loop, 12, S.flowPhase, { kind: 'neg', r: 4.4 * k });
+      Z.trailDot(ctx, loop, S.flowPhase, { r: 5, k: k });
+      Z.T(ctx, '电流方向：与电子相反（外电路 + → −）', (x0 + x1) / 2, yT - 26 * k,
+        { size: 18 * k, align: 'center', color: K.negHi });
     });
   }
 
@@ -1783,7 +1869,12 @@
     });
     /* 电子持续穿过横截面；每穿过一个就闪一下（q 就是数这个） */
     D(ctx, S.r1, function () {
+      /* 电子向右跑（路径顺序 = 电子运动方向） */
       Z.chargeFlow(ctx, [[x0, y], [x1, y]], 9, S.flowPhase, { kind: 'neg', r: 4.8 * k });
+      /* 电流方向与电子相反：向左 —— 必须显式标出来，否则学生会以为电流也是向右 */
+      Z.wirePath(ctx, [[x1 - 40 * k, y - 56 * k], [x0 + 60 * k, y - 56 * k]], { color: K.negHi, w: 2.4 * k });
+      Z.wirePath(ctx, [[x0 + 82 * k, y - 62 * k], [x0 + 60 * k, y - 56 * k], [x0 + 82 * k, y - 50 * k]], { color: K.negHi, w: 2.4 * k });
+      Z.T(ctx, '电流方向（与电子相反）', (x0 + x1) / 2, y - 76 * k, { size: 18 * k, align: 'center', color: K.negHi });
       var xc = (x0 + x1) / 2;
       var u = S.anim && !S.frozen ? Z2.wrap(-S.T * 0.18) : 0.17;
       Z.burst111(ctx, xc, y, Z2.wrap(u * 9), { r: 26, color: K.negHi, k: k, a: 0.42 });
@@ -1864,7 +1955,12 @@
       Z.wirePath(ctx, [[x0, y - hh], [x1, y - hh]], { w: 3 * k });
       Z.wirePath(ctx, [[x0, y + hh], [x1, y + hh]], { w: 3 * k });
     });
-    D(ctx, S.r1, function () { Z.chargeFlow(ctx, [[x0, y], [x1, y]], 8, S.flowPhase, { kind: 'neg', r: 4.6 * k }); });
+    D(ctx, S.r1, function () {
+      Z.chargeFlow(ctx, [[x0, y], [x1, y]], 8, S.flowPhase, { kind: 'neg', r: 4.6 * k });
+      Z.wirePath(ctx, [[x1 - 40 * k, y - hh - 60 * k], [x0 + 60 * k, y - hh - 60 * k]], { color: K.negHi, w: 2.4 * k });
+      Z.wirePath(ctx, [[x0 + 82 * k, y - hh - 66 * k], [x0 + 60 * k, y - hh - 60 * k], [x0 + 82 * k, y - hh - 54 * k]], { color: K.negHi, w: 2.4 * k });
+      Z.T(ctx, '电流方向（与电子相反）', (x0 + x1) / 2, y - hh - 80 * k, { size: 18 * k, align: 'center', color: K.negHi });
+    });
     var xc = (x0 + x1) / 2, th = S.theta * Math.PI / 180;
     var dx = Math.tan(th) * hh * 0.85;
     var col = S.isCross ? K.text : K.neg;
@@ -1903,24 +1999,37 @@
       rings: [[mx(L, 0.02), my(L, 0.06), (L.mx1 - L.mx0) * 0.96, (L.my1 - L.my0) * 0.6]]
     });
     var x0 = mx(L, 0.04), x1 = mx(L, 0.96), y = my(L, 0.34), hh = 62 * k;
+    /* ① 电解槽 + 两个电极：左 = 正极（高电势），右 = 负极（低电势）
+          ⇒ 槽内电场 E 由左指向右（从 + 到 −） */
     D(ctx, S.r0, function () {
       Z.wirePath(ctx, [[x0, y - hh], [x1, y - hh], [x1, y + hh], [x0, y + hh], [x0, y - hh]], { w: 2.6 * k });
+      /* 电极板 */
+      Z.plate(ctx, x0 + 6 * k, y, 9 * k, hh * 1.85, {});
+      Z.plate(ctx, x1 - 6 * k, y, 9 * k, hh * 1.85, {});
+      Z.T(ctx, '正极（+）', x0 + 8 * k, y - hh - 24 * k, { size: 19 * k, align: 'center', color: K.text });
+      Z.T(ctx, '负极（−）', x1 - 8 * k, y - hh - 24 * k, { size: 19 * k, align: 'center', color: K.dim });
+      /* 槽内电场方向：从正极指向负极 */
+      for (var ei = 0; ei < 4; ei++) {
+        var exx = x0 + (x1 - x0) * (ei + 1) / 5;
+        Z.wirePath(ctx, [[exx - 18 * k, y - hh - 8 * k], [exx + 18 * k, y - hh - 8 * k]], { color: 'rgba(95,196,238,0.75)', w: 2 * k });
+        Z.wirePath(ctx, [[exx + 6 * k, y - hh - 14 * k], [exx + 18 * k, y - hh - 8 * k], [exx + 6 * k, y - hh - 2 * k]], { color: 'rgba(95,196,238,0.75)', w: 2 * k });
+      }
+      Z.T(ctx, '电场 E', x0 + (x1 - x0) * 0.5, y - hh - 44 * k, { size: 19 * k, align: 'center', color: K.negHi });
     });
-    /* 上排正离子向右、下排负离子向左：两股方向相反的定向移动 */
+    /* ② 两种离子的运动：正离子顺 E（向右）；负离子逆 E（向左）
+          注意：两者运动方向相反，但**产生的电流方向相同**（都沿 E） */
     D(ctx, S.r1, function () {
-      Z.chargeFlow(ctx, [[x0 + 20 * k, y - 30 * k], [x1 - 20 * k, y - 30 * k]], 6, S.flowPhase, { kind: 'pos', r: 5 * k, glow: false });
-      Z.chargeFlow(ctx, [[x1 - 20 * k, y + 30 * k], [x0 + 20 * k, y + 30 * k]], 6, 1 - S.flowPhase, { kind: 'neg', r: 5 * k });
-      Z.trailDot(ctx, [[x0 + 20 * k, y - 30 * k], [x1 - 20 * k, y - 30 * k]], S.flowPhase, { r: 5, k: k, color: K.pos });
-      Z.trailDot(ctx, [[x1 - 20 * k, y + 30 * k], [x0 + 20 * k, y + 30 * k]], 1 - S.flowPhase, { r: 5, k: k, color: K.neg });
-      Z.T(ctx, '正离子 →', (x0 + x1) / 2, y - hh - 26 * k, { size: 20 * k, align: 'center', color: K.text });
-      Z.T(ctx, '← 负离子', (x0 + x1) / 2, y + hh + 28 * k, { size: 20 * k, align: 'center', color: K.neg });
+      Z.chargeFlow(ctx, [[x0 + 34 * k, y - 26 * k], [x1 - 34 * k, y - 26 * k]], 6, S.flowPhase, { kind: 'pos', r: 5 * k, glow: false });
+      Z.chargeFlow(ctx, [[x1 - 34 * k, y + 26 * k], [x0 + 34 * k, y + 26 * k]], 6, S.flowPhase, { kind: 'neg', r: 5 * k });
+      Z.T(ctx, '正离子：顺着电场走 →', (x0 + x1) / 2 - 60 * k, y - 54 * k, { size: 19 * k, align: 'center', color: K.text });
+      Z.T(ctx, '← 负离子：逆着电场走', (x0 + x1) / 2 + 60 * k, y + 54 * k, { size: 19 * k, align: 'center', color: K.neg });
     });
-    /* 关键：两股电流方向相同 —— 画在一块，用箭头把"等效"讲清楚 */
+    /* ③ 电流方向：两种离子等效成同一股电流（都沿 E，向右） */
     D(ctx, S.r3, function () {
-      var yy = y + hh + 74 * k;
+      var yy = y + hh + 62 * k;
       Z.wirePath(ctx, [[x0 + 40 * k, yy], [x1 - 40 * k, yy]], { color: K.negHi, w: 2.4 * k });
       Z.wirePath(ctx, [[x1 - 62 * k, yy - 11 * k], [x1 - 40 * k, yy], [x1 - 62 * k, yy + 11 * k]], { color: K.negHi, w: 2.4 * k });
-      Z.T(ctx, '两者形成的电流方向相同 ⇒ q = |q₁| + |q₂|', (x0 + x1) / 2, yy + 30 * k,
+      Z.T(ctx, '两股定向移动等效成同一股电流（方向相同）⇒ q = |q₁| + |q₂|', (x0 + x1) / 2, yy + 30 * k,
         { size: 20 * k, align: 'center', color: K.negHi });
     });
   }
@@ -1945,20 +2054,22 @@
     D(ctx, S.r0, function () {
       Z.wirePath(ctx, [[x0, y - hh], [xr, y - hh]], { w: 3 * k });
       Z.wirePath(ctx, [[x0, y + hh], [xr, y + hh]], { w: 3 * k });
-      Z.T(ctx, '左端横截面', xe, y - hh - 36 * k, { size: 19 * k, align: 'center', color: K.dim });
+      Z.T(ctx, '横截面 S', xe, y - hh - 36 * k, { size: 19 * k, align: 'center', color: K.dim });
     });
-    /* ① 电子柱随 t 生长：vt 那段体积里挤满自由电子 */
-    var xL = xr - (xr - xe) * Math.max(0.04, S.tFrac);
+    /* ① 电子柱随 t 生长：电子从右往左跑 ⇒ "t 时间内将通过横截面"的电子
+          就是横截面**右侧**长度 vt 的那一段（t 越长、这段越长） */
+    var xR = xe + (xr - xe) * Math.max(0.04, S.tFrac);
     D(ctx, S.r1, function () {
       ctx.save();
       ctx.fillStyle = 'rgba(46,159,208,0.14)';
-      ctx.fillRect(xL, y - hh, xe - xL, hh * 2);
+      ctx.fillRect(xe, y - hh, xR - xe, hh * 2);
       ctx.restore();
       Z.wirePath(ctx, [[xe, y - hh - 16 * k], [xe, y + hh + 16 * k]], { color: K.neg, w: 2.2 * k });
-      Z.M(ctx, 'vt', (xL + xe) / 2, y, { size: 30 * k, color: K.text });
+      Z.M(ctx, 'vt', (xe + xR) / 2, y, { size: 30 * k, color: K.text });
       for (var i = 0; i < 5; i++) for (var j = 0; j < 3; j++) {
-        Z.charge(ctx, xL + (xe - xL) * (i + 0.5) / 5, y - hh * 0.55 + j * hh * 0.55, 3.8 * k, 'neg', {});
+        Z.charge(ctx, xe + (xR - xe) * (i + 0.5) / 5, y - hh * 0.55 + j * hh * 0.55, 3.8 * k, 'neg', {});
       }
+      Z.T(ctx, '电子 →', xe - 10 * k, y + hh + 30 * k, { size: 17 * k, align: 'right', color: K.neg });
     });
     /* ② 真正的主角：电子一个个穿过左端横截面（q 就是"数穿过去的电荷量"） */
     D(ctx, S.r2, function () {
@@ -2858,13 +2969,19 @@
     o.vPxRaw = raw;                                                     // 未设下限（用于验证 ∝I）
     o.vPx = raw > 0 ? Math.min(V_PX_MAX, Math.max(V_PX_MIN, raw)) : 0;   // 屏幕速度（含上下限）
 
-    /* 用刚算出的 vPx 重算相位（相位 ∝ I） */
+    /* ===== 相位（方向约定）=====
+       相位**取正号**：点沿 pts 数组给出的顺序前进。
+       所以每个场景只要把 pts 按"物理上该走的方向"写，画面方向就必然正确。
+       （旧实现取负号，导致各场景方向随机地反掉 —— 这是本次修正的根因。） */
     var _vpr = o.vPxRaw;
-    o.flowPhase = (A && !A.frozen && _vpr > 0) ? A.wrap(-T * _vpr / 700) : PHASE;
-    o.pumpPhase = (A && !A.frozen && _vpr > 0) ? A.wrap(T * _vpr / 700 * 1.5) : PHASE2;
-    o.wirePhase = o.flowPhase;
-    o.slowPhase = (A && !A.frozen && _vpr > 0) ? A.wrap(-T * _vpr / 700 * 0.5) : 0.08;
-    o.advPhase  = (A && !A.frozen && _vpr > 0) ? A.wrap(-T * _vpr / 700) : PHASE;
+    var _fwd = function (mult) {
+      return (A && !A.frozen && _vpr > 0) ? A.wrap(T * _vpr / 700 * (mult || 1)) : PHASE;
+    };
+    o.flowPhase = _fwd(1);        // 导线里的电子（pts 按电子运动方向给）
+    o.pumpPhase = _fwd(1.5);      // 电源内部的搬运（同向、略快，表示"从后面推"）
+    o.wirePhase = _fwd(1);
+    o.slowPhase = _fwd(0.5);
+    o.advPhase  = _fwd(1);        // 抽水机 / 电解液
 
     /* —— 因果链 —— */
     o.chainP = s.chainP;
@@ -3589,6 +3706,41 @@
       Rz.push({ name: '路径插值 pathAt', got: p1.x + '/' + p2.x, want: '20/70', ok: ok2 });
       if (!ok2) fails.push(Rz[Rz.length - 1]);
       A.t = svT; A.playing = svP; A.frozen = svF;
+      if (A.playing) A.startLoop();
+      return { pass: fails.length === 0, total: Rz.length, failed: fails.length, results: Rz, fails: fails };
+    },
+    /* ===== 方向自检（步 1/4/5/6/7/8/10/12/14/15/16 的电子/离子/电流方向）=====
+       本节所有"动"的东西都必须满足：
+         ① 电子（负电荷）运动方向 = −(电流方向) = −(电场方向)
+         ② 正离子顺电场、负离子逆电场，但两者贡献的电流同向
+         ③ 路径的 pts 顺序 = 该载流子的真实运动方向（相位取正号） */
+    verifyDirections: function () {
+      var Pz = P, Rz = [], fails = [];
+      function chk(name, ok, got, want) {
+        Rz.push({ name: name, got: got, want: want, ok: !!ok });
+        if (!ok) fails.push(Rz[Rz.length - 1]);
+      }
+      /* ① 电子逆电场 */
+      chk('电子运动方向 = −E（E 向右时电子向左）',
+        Pz.carrierDirBySign(-1, +1) === -1 ? 1 : 0, Pz.carrierDirBySign(-1, +1), -1);
+      /* ② 电流 = 正电荷方向 = E 方向 */
+      chk('电流方向 = E 方向', Pz.currentDirFromE(+1), +1, 0);
+      /* ③ 电子方向与电流方向相反 */
+      chk('电子方向与电流方向相反',
+        Pz.carrierDirBySign(-1, +1) !== Pz.currentDirFromE(+1) ? 1 : 0, 1, 1);
+      /* ④ 电解液：正离子顺 E、负离子逆 E，但电流同向 */
+      chk('正离子顺 E', Pz.carrierDirBySign(+1, +1), +1, 0);
+      chk('负离子逆 E', Pz.carrierDirBySign(-1, +1), -1, 0);
+      chk('两种离子贡献的电流同向',
+        Pz.contributionDir(+1, +1) === Pz.contributionDir(-1, +1) ? 1 : 0, 1, 1);
+      /* ⑤ 各场景的 pts 顺序与物理方向一致（抽查：相位为正 ⇒ 点沿 pts 前进） */
+      var A = global.DCANIM;
+      var sv = { t: A.t, playing: A.playing, frozen: A.frozen };
+      A.frozen = false; A.playing = true;
+      A.t = 1.0; var p1 = derive(st).flowPhase;
+      A.t = 2.0; var p2 = derive(st).flowPhase;
+      chk('相位随时间单调增（pts 顺序即运动方向）', p2 > p1, p2.toFixed(4), '> ' + p1.toFixed(4));
+      A.t = sv.t; A.playing = sv.playing; A.frozen = sv.frozen;
       if (A.playing) A.startLoop();
       return { pass: fails.length === 0, total: Rz.length, failed: fails.length, results: Rz, fails: fails };
     },
