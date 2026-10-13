@@ -585,25 +585,9 @@
     return AN.stepT * 1000 >= (atMs || 0);
   };
 
-  /* ---------------- 自动演示：把这一步的连续量按时间扫过 ----------------
-     配置形如 { key:'tn', from:0, to:1, dur:7, step:0.01 }
-       · 单向循环：扫到 to 之后回到 from 重来（反向重来会让电子倒流，误导）
-       · 用户在拖动这个量时不抢（hold 窗口内不动）
-       · 暂停时不推进（playing=false 时直接返回） */
-  AN.auto = function (cfg, st, onSet) {
-    if (!cfg || AN.frozen || !AN.playing || AN.held()) return false;
-    if (AN.autoKey !== cfg.key) { AN.autoKey = cfg.key; AN.autoU = 0; }
-    AN.autoU += (cfg.dur ? 1 / cfg.dur : 0.15) * AN.speed * (1 / 60);
-    if (AN.autoU >= 1) AN.autoU -= 1;
-    var u = AN.smooth(AN.autoU);
-    var v = cfg.from + (cfg.to - cfg.from) * u;
-    if (cfg.step) v = Math.round(v / cfg.step) * cfg.step;
-    v = Math.round(v * 1e6) / 1e6;
-    if (st[cfg.key] === v) return false;
-    st[cfg.key] = v;
-    if (onSet) onSet(cfg.key);
-    return true;
-  };
+  /* 自动演示扫掠已彻底移除。
+     理由（用户要求）：**参数由老师调**（电压、横截面、电流…），动画不许自己改参数。
+     本内核只保留：可暂停/停止的时钟（供电荷流动使用）+ 入场节拍（已停用）+ 相位换算。 */
 
   /* ---------------- 电流驱动（要求②）----------------
      电荷定向移动的速度必须由电流值决定：I = nqSv ⇒ v = I/(nqS)。
@@ -1229,9 +1213,14 @@
      场景 1 · 闪电一瞬间 vs 灯泡一直亮（环节①）
      ===================================================================== */
   /* 逐步叠加的通用包装：a 是入场进度（0→1） */
+  /* 绘制包装：**始终执行**。
+     曾经用入场透明度做"逐步显影"，一旦时钟停住（暂停/刚翻页）就会整屏空白 —— 已废除。
+     现在画面只由参数决定，与时钟无关。 */
   function D(ctx, a, fn) {
-    if (a <= 0.004) return;
-    ctx.save(); ctx.globalAlpha = a; fn(); ctx.restore();
+    ctx.save();
+    ctx.globalAlpha = 1;
+    fn();
+    ctx.restore();
   }
 
   function scIntro(ctx, W, H, S) {
@@ -1910,7 +1899,7 @@
     var rows = [['1 A', 'A'], ['1 mA = 10⁻³ A', 'mA'], ['1 μA = 10⁻⁶ A', 'μA']];
     for (var i = 0; i < rows.length; i++) {
       (function (i) {
-        D(ctx, S.rise(140 + i * 260, 420), function () {
+        D(ctx, 1, function () {
           var yy = ly + i * 62 * k;
           var on = i + 1 === S.unitIdx + 1;
           /* 当前单位持续呼吸 —— 切换单位时焦点看得见 */
@@ -2038,49 +2027,83 @@
      场景 14 · I = neSv 四步链（环节⑤）
      ===================================================================== */
   function scMicro(ctx, W, H, S) {
+    /* 依据教材图 11.1-3 与原文（"导体左端的自由电子到达右端"）重做：
+         · 电子**从左向右**定向移动（速度 v，向右）
+         · 横截面 S 垂直于电流方向（画成竖直的截面线）
+         · t 时间内通过该截面的电子 = 截面**左侧**长 vt 那段柱体里的全部电子
+           ⇒ 个数 = n·S·vt，电荷量 q = n·e·S·vt
+         · 柱体内电子的**疏密**就是 n（数密度）—— 拉长 t 时柱体变长、电子个数按 n 增加 */
     var k = Z.sc(H), L = layout(W, H, {});
+    var vPx = S.vDrift > 0 ? S.vDrift : 7.47e-5;          // 真实漂移速率（读数用）
+    var nPx = P.copperCarrierDensity();                    // 真实数密度（读数用）
+    var I = S.Idrift;
     shell(ctx, W, H, S, L, {
-      cn: 'vt → Svt → nSvt → neSvt ⇒ I = neSv', en: 'Microscopic expression',
+      cn: 't 时间内通过横截面的电子数 = n·S·vt ⇒ q = neSvt ⇒ I = neSv',
+      en: 'Microscopic expression',
       card: [
-        { label: 'vt', text: '导体的长度', color: S.chainOn > 0 ? K.text : K.dim },
-        { label: 'Svt', text: '导体的体积', color: S.chainOn > 1 ? K.text : K.dim },
-        { label: 'nSvt', text: '自由电子总数', color: S.chainOn > 2 ? K.text : K.dim },
-        { label: 'neSvt', text: '总电荷量', color: S.chainOn > 3 ? K.text : K.dim },
-        { formula: 'I = neSv' }
+        { label: 'S', text: '导体的横截面积' },
+        { label: 'n', text: '自由电子数密度（单位体积内的个数）' },
+        { label: 'v', text: '自由电子定向移动的平均速率', color: K.neg },
+        { formula: 'N = n·S·v·t' },
+        { formula: 'q = n·e·S·v·t' },
+        { formula: 'I = q/t = neSv', color: K.text }
       ],
-      rings: [[mx(L, 0.02), my(L, 0.10), (L.mx1 - L.mx0) * 0.96, (L.my1 - L.my0) * 0.5]]
+      rings: [[mx(L, 0.02), my(L, 0.10), (L.mx1 - L.mx0) * 0.96, (L.my1 - L.my0) * 0.56]]
     });
-    var y = my(L, 0.34), xr = mx(L, 0.96), xe = mx(L, 0.60), hh = 48 * k, x0 = mx(L, 0.02);
-    D(ctx, S.r0, function () {
-      Z.wirePath(ctx, [[x0, y - hh], [xr, y - hh]], { w: 3 * k });
-      Z.wirePath(ctx, [[x0, y + hh], [xr, y + hh]], { w: 3 * k });
-      Z.T(ctx, '横截面 S', xe, y - hh - 36 * k, { size: 19 * k, align: 'center', color: K.dim });
-    });
-    /* ① 电子柱随 t 生长：电子从右往左跑 ⇒ "t 时间内将通过横截面"的电子
-          就是横截面**右侧**长度 vt 的那一段（t 越长、这段越长） */
-    var xR = xe + (xr - xe) * Math.max(0.04, S.tFrac);
-    D(ctx, S.r1, function () {
-      ctx.save();
-      ctx.fillStyle = 'rgba(46,159,208,0.14)';
-      ctx.fillRect(xe, y - hh, xR - xe, hh * 2);
-      ctx.restore();
-      Z.wirePath(ctx, [[xe, y - hh - 16 * k], [xe, y + hh + 16 * k]], { color: K.neg, w: 2.2 * k });
-      Z.M(ctx, 'vt', (xe + xR) / 2, y, { size: 30 * k, color: K.text });
-      for (var i = 0; i < 5; i++) for (var j = 0; j < 3; j++) {
-        Z.charge(ctx, xe + (xR - xe) * (i + 0.5) / 5, y - hh * 0.55 + j * hh * 0.55, 3.8 * k, 'neg', {});
+    var y = my(L, 0.40), xL0 = mx(L, 0.03), xR0 = mx(L, 0.97), hh = 52 * k;
+    var xc = mx(L, 0.62);                                  // 横截面位置（右侧）
+    /* ① 导体：上下两条边界线 + 左右两端封口 */
+    Z.wirePath(ctx, [[xL0, y - hh], [xR0, y - hh]], { w: 3 * k });
+    Z.wirePath(ctx, [[xL0, y + hh], [xR0, y + hh]], { w: 3 * k });
+    Z.wirePath(ctx, [[xL0, y - hh], [xL0, y + hh]], { w: 2 * k });
+
+    /* ② 高亮柱体：截面左侧、长度 vt（t 内这些电子全部穿过截面） */
+    var xA = xc - (xc - xL0) * Math.max(0.06, S.tFrac);    // 柱体左端
+    ctx.save();
+    ctx.fillStyle = 'rgba(46,159,208,0.13)';
+    ctx.fillRect(xA, y - hh, xc - xA, hh * 2);
+    ctx.restore();
+    /* ③ 横截面（垂直于电流方向的竖直截面）+ 面积标注 S */
+    Z.wirePath(ctx, [[xc, y - hh - 18 * k], [xc, y + hh + 18 * k]], { color: K.negHi, w: 2.6 * k });
+    /* （横截面标签画在右侧，见上） */
+    /* ④ 柱体内按 n 的疏密排自由电子（电子从左向右跑） */
+    var cols = 6, rows = 3;
+    for (var i = 0; i < cols; i++) {
+      for (var j = 0; j < rows; j++) {
+        var px = xA + (xc - xA) * (i + 0.5) / cols;
+        var py = y - hh * 0.62 + j * hh * 0.62;
+        Z.charge(ctx, px, py, 4.2 * k, 'neg', {});
       }
-      Z.T(ctx, '电子 →', xe - 10 * k, y + hh + 30 * k, { size: 17 * k, align: 'right', color: K.neg });
-    });
-    /* ② 真正的主角：电子一个个穿过左端横截面（q 就是"数穿过去的电荷量"） */
-    D(ctx, S.r2, function () {
-      var seg = [[xr - 6 * k, y], [x0 + 6 * k, y]];
-      Z.chargeFlow(ctx, seg, 12, S.flowPhase, { kind: 'neg', r: 4.2 * k });
-      Z.trailDot(ctx, seg, S.flowPhase, { r: 5, k: k });
-      /* 通过横截面的瞬间给一个计数闪光 */
-      var u = S.anim && !S.frozen ? Z2.wrap(-S.T * 0.34) : 0.17;
-      var p = Z.pathAt(seg, u);
-      Z.burst111(ctx, p.x, p.y, Z2.wrap(u * 12), { r: 18, color: K.negHi, k: k, a: 0.4 });
-    });
+    }
+    /* 柱体长度标注 vt */
+    Z.wirePath(ctx, [[xA, y - hh - 6 * k], [xA, y - hh - 26 * k]], { color: K.text, w: 1.6 * k });
+    Z.wirePath(ctx, [[xc, y - hh - 6 * k], [xc, y - hh - 26 * k]], { color: K.text, w: 1.6 * k });
+    Z.wirePath(ctx, [[xA, y - hh - 16 * k], [xc, y - hh - 16 * k]], { color: K.text, w: 1.6 * k });
+    Z.M(ctx, 'vt', (xA + xc) / 2, y - hh - 34 * k, { size: 26 * k, color: K.text });
+    Z.T(ctx, '横截面 S', xc + 66 * k, y - hh - 40 * k, { size: 19 * k, align: 'center', color: K.negHi });
+    Z.T(ctx, '（t 内这些电子全部通过横截面）', (xA + xc) / 2, y + hh + 56 * k,
+      { size: 17 * k, align: 'center', color: K.dim });
+
+    /* ⑤ 电子流：从左向右连续跑过横截面（方向 = v 的方向） */
+    var ePath = [[xL0 + 4 * k, y], [xR0 - 4 * k, y]];
+    Z.chargeFlow(ctx, ePath, 14, S.flowPhase, { kind: 'neg', r: 4.6 * k });
+    Z.trailDot(ctx, ePath, S.flowPhase, { r: 5, k: k });
+    /* ⑥ 速度箭头 v（向右） */
+    Z.wirePath(ctx, [[xL0 + 24 * k, y + hh + 30 * k], [xL0 + 140 * k, y + hh + 30 * k]], { color: K.neg, w: 2.4 * k });
+    Z.wirePath(ctx, [[xL0 + 122 * k, y + hh + 24 * k], [xL0 + 140 * k, y + hh + 30 * k], [xL0 + 122 * k, y + hh + 36 * k]], { color: K.neg, w: 2.4 * k });
+    Z.M(ctx, 'v', xL0 + 152 * k, y + hh + 30 * k, { size: 24 * k, color: K.neg });
+    /* ⑦ 电流方向（与电子相反） */
+    Z.wirePath(ctx, [[xL0 + 560 * k, y + hh + 30 * k], [xL0 + 430 * k, y + hh + 30 * k]], { color: K.negHi, w: 2.4 * k });
+    Z.wirePath(ctx, [[xL0 + 448 * k, y + hh + 24 * k], [xL0 + 430 * k, y + hh + 30 * k], [xL0 + 448 * k, y + hh + 36 * k]], { color: K.negHi, w: 2.4 * k });
+    Z.T(ctx, '电流方向（与电子相反）', xL0 + 572 * k, y + hh + 30 * k, { size: 17 * k, align: 'left', color: K.negHi });
+
+    /* ⑧ 画布内实时读数：把 n、S、v、t 与公式对上 */
+    Z.readoutBox(ctx, mx(L, 0.40), my(L, 0.74), (L.mx1 - L.mx0) * 0.56, [
+      ['数密度 n', P.sci(nPx, 2) + ' m⁻³'],
+      ['横截面积 S', '1.0×10⁻⁶ m²（1 mm²）'],
+      ['平均速率 v', P.sci(vPx, 2) + ' m/s', K.neg],
+      ['柱内电子数 N = nSvt', '∝ t（拉长 t 就更多）', K.text]
+    ], { k: k });
   }
 
   /* =====================================================================
@@ -2461,7 +2484,7 @@
       bullets: [{ text: 'P 把电子从 A 取回 B，两极电荷不被用光' }, { text: '两极电压 U 由电源维持不变' }, { text: 'Q = CU、I = U/R 都随 U 变' }],
       caption: '电源维持两极电压不变 —— 这才是"恒定"的来源',
       captionEn: 'Constant voltage source',
-      init: function (S) { S.eV = 6; }
+      init: function (S) { S.eV = 6; S.eR = 8; }
     },
     {
       act: 'a2', title: '电压不变，换一个外电阻会怎样',
@@ -2477,7 +2500,7 @@
       bullets: [{ text: '电源只负责维持 U 不变' }, { text: '电流由电路决定：I = U/R' }, { text: 'U、R 都不变 ⇒ 恒定电流' }],
       caption: '电压由电源维持，电流由电路决定 —— 两者不能混为一谈',
       captionEn: 'Current is set by U and R',
-      init: function (S) { S.eV = 6; S.eR = 3; }
+      init: function (S) { S.eV = 6; S.eR = 1.5; }
     },
     {
       act: 'a2', title: '抽水机类比：只类比“维持差额”这一点',
@@ -2822,12 +2845,10 @@
     o.flowPhase = PHASE; o.pumpPhase = PHASE2;
     o.wirePhase = PHASE; o.slowPhase = 0.08; o.advPhase = PHASE;
 
-    /* 元素逐步叠加：屏上各图元按节拍依次淡入（0 → 1） */
-    o.r0 = o.rise(0, 460);        // 骨架（板 / 导线 / 坐标）
-    o.r1 = o.rise(220, 460);      // 主体回路
-    o.r2 = o.rise(430, 460);      // 运动中的电荷
-    o.r3 = o.rise(640, 480);      // 标注 / 读数 / 结论
-    o.r4 = o.rise(860, 500);      // 收尾（公式、提示）
+    /* 所有元素**始终可见**（恒为 1）。
+       原来用"入场节拍"让元素逐个淡入，结果暂停在 t=0 时整屏空白 —— 已废除。
+       现在画面只由**参数**决定：拖哪个量，画面就按物理关系变。 */
+    o.r0 = 1; o.r1 = 1; o.r2 = 1; o.r3 = 1; o.r4 = 1;
 
     /* 持续动画的通用相位（呼吸/脉冲用；静止时归 0） */
     o.cyc = A && !A.frozen ? A.wrap(T / 2.6) : 0;
@@ -3053,38 +3074,13 @@
   function startAnim() {
     var A = global.DCANIM;
     if (!A) return;
-    A.onFrame = function () { autoDrive(); draw(); };
+    A.onFrame = function () { draw(); };
     A.onStop = function () { resetStep(); };
     A.startLoop();                  /* 循环常驻；跑不跑由 A.playing 决定 */
   }
 
-  /* ---------------- 自动演示：每一步的连续量按规定节奏自己扫过 ----------------
-     老师不拖，动画也在走；一动手（拖/点/翻页）就自动让位 3.5 s。
-     from/to 只扫"单向过程"，扫到头从起点重来 —— 反着播会让电子倒流，误导。 */
-  var AUTODRV = {
-    intro:        { key: 'spark',   from: 0.15, to: 1,    dur: 6.5, step: 0.05 },
-    transient:    { key: 'tn',      from: 0,    to: 1,    dur: 8,   step: 0.005 },
-    source:       { key: 'eV',      from: 2,    to: 12,   dur: 9,   step: 0.5 },
-    pump:         { key: 'flowq',   from: 0.25, to: 1,    dur: 7,   step: 0.01 },
-    sourceAuto:   { key: 'eV',      from: 2,    to: 12,   dur: 9,   step: 0.5 },
-    field:        { key: 'Uwire',   from: 1,    to: 10,   dur: 10,  step: 0.5 },
-    ammeter:      { key: 'Uamm',    from: 0.5,  to: 5,    dur: 9,   step: 0.25 },
-    define:       { key: 'tdefine', from: 1,    to: 10,   dur: 8,   step: 0.5 },
-    units:        { key: 'Iunit',   from: 1,    to: 800,  dur: 9,   step: 0.1 },
-    crosssec:     { key: 'theta',   from: 0,    to: 80,   dur: 9,   step: 1 },
-    micro:        { key: 'tFrac',   from: 0.05, to: 1,    dur: 7,   step: 0.01 },
-    driftnum:     { key: 'cU',     from: 0.5,  to: 6,    dur: 9,   step: 0.25 },
-    lightspeed:   { key: 'lenL',    from: 0,    to: 3,    dur: 9,   step: 0.05 },
-    capacity:     { key: 'capT',    from: 1,    to: 10,   dur: 9,   step: 0.5 }
-  };
-  function autoDrive() {
-    var A = global.DCANIM;
-    if (!A || A.frozen || !A.playing) return;
-    if (mDown || A.held()) return;                 /* 手上有动作就不抢 */
-    var cfg = AUTODRV[STEPS[st.step].scene];
-    if (!cfg) return;
-    A.auto(cfg, st, function (k) { syncCtrl(k); });
-  }
+  /* 自动扫掠已废除：参数一律由老师拖动，动画不自己改参数。
+     （保留 syncCtrl，供拖动后同步控件显示用） */
   function syncCtrl(key) {
     var it = CTRL.items && CTRL.items[key];
     if (it && !it.toggle) it.inp.value = st[key];
@@ -3709,6 +3705,36 @@
       if (A.playing) A.startLoop();
       return { pass: fails.length === 0, total: Rz.length, failed: fails.length, results: Rz, fails: fails };
     },
+    /* ===== 参数自检：参数只能由老师改，动画不许自己动 ===== */
+    verifyParamsManual: function () {
+      var A = global.DCANIM, Rz = [], fails = [];
+      function chk(n, ok, got, want) {
+        Rz.push({ name: n, got: got, want: want, ok: !!ok });
+        if (!ok) fails.push(Rz[Rz.length - 1]);
+      }
+      /* 自动演示机制必须已彻底移除 */
+      chk('内核里没有 auto 扫掠', typeof A.auto === 'undefined', typeof A.auto, 'undefined');
+      chk('app 里没有 autoDrive', typeof autoDrive === 'undefined', typeof autoDrive, 'undefined');
+      /* 播放状态下，参数也必须保持不变（只有电荷在动） */
+      var sv = { t: A.t, playing: A.playing, frozen: A.frozen };
+      A.frozen = false; A.playing = true;
+      st.step = 15; st.tFrac = 0.45;
+      var before = st.tFrac;
+      A.tick(1.0); var S1 = derive(st);
+      A.tick(1.0); var S2 = derive(st);
+      chk('播放时参数不被自动修改（tFrac 不变）', st.tFrac === before, st.tFrac, before);
+      chk('播放时相位照常推进（只有相位在变）', S2.flowPhase !== S1.flowPhase, '变化', '不变');
+      /* 电压/横截面参数同样不被自动改 */
+      st.step = 3; st.eV = 6; st.eR = 3;
+      A.tick(1.0); derive(st);
+      chk('电压 U 不被自动修改', st.eV === 6, st.eV, 6);
+      chk('外电阻 R 不被自动修改', st.eR === 3, st.eR, 3);
+      st.step = 13; st.theta = 30; A.tick(1.0); derive(st);
+      chk('横截面倾角 θ 不被自动修改', st.theta === 30, st.theta, 30);
+      A.t = sv.t; A.playing = sv.playing; A.frozen = sv.frozen;
+      if (A.playing) A.startLoop();
+      return { pass: fails.length === 0, total: Rz.length, failed: fails.length, results: Rz, fails: fails };
+    },
     /* ===== 方向自检（步 1/4/5/6/7/8/10/12/14/15/16 的电子/离子/电流方向）=====
        本节所有"动"的东西都必须满足：
          ① 电子（负电荷）运动方向 = −(电流方向) = −(电场方向)
@@ -3916,6 +3942,14 @@
 
   buildToc();
   apply(st, 0);
+  /* 支持 #s=N：打开就跳到第 N 步（方便老师做"直达某一步"的链接，也便于自动化验收） */
+  (function () {
+    var m = /(?:^|[#&])s=(\d+)/.exec(global.location.hash || '');
+    if (m) {
+      var idx = Math.max(0, Math.min(STEPS.length - 1, parseInt(m[1], 10) - 1));
+      apply(st, idx);
+    }
+  })();
   draw();
   setTimeout(draw, 80);
   startAnim();                       /* 起循环 */
