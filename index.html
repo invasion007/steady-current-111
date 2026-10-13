@@ -247,6 +247,26 @@
   /* 稳态平均速率与时间无关 —— 本节的“恒定”依据 */
   function steadyAvg(t, E, tau) { return avgDrift(E, tau); }
 
+  /* ---------------- 六·B 恒压电源（本课的前提）----------------
+     本课面对的是**恒定电源**：两极间电压 U 由电源维持、不随时间变化。
+     于是电路里的一切都是"被 U 决定"的，而不是反过来：
+         U（电源给的，可调） → I = U/R（电路自己决定的） → v = I/(nqS)（微观）
+     这些函数把这条链写死，任何画面都必须走这条链，不许再"凭空给电流"。
+  */
+  /* 一段导体的电阻：R = ρL/S（用于把 U 与 I 连起来） */
+  function resistance(rho, L, S) { return rho * L / S; }
+  /* 恒压源下的电流：I = U/R */
+  function currentFromU(U, R) { return R > 0 ? U / R : 0; }
+  /* 恒压源下，导体内场强：E = U/L（匀强，恒定） */
+  function fieldFromU(U, L) { return L > 0 ? U / L : 0; }
+  /* 恒压源下，极板（电极）上的电荷量：Q = C·U —— U 变，Q 就跟着变 */
+  function electrodeCharge(C, U) { return C * U; }
+  /* 恒定电流的判据：U 不变且 R 不变 ⇒ I 不随时间变化 */
+  function isSteady(U, R, t1, t2) { return currentFromU(U, R) === currentFromU(U, R); }
+  /* 一段导线内部为维持恒定电流所需的"搬运"速率 —— 就是导线里的电流本身。
+     注意：它不是外部可调的旋钮；电源只是把电子搬回去，搬多快由电路决定。 */
+  function pumpRateEquals(I) { return I; }
+
   /* ---------------- 七、瞬间电流（电容器放电，环节①） ---------------- */
   function rcDecay(U0, R, C, t) { return U0 * Math.exp(-t / (R * C)); }
   function rcCurrent(U0, R, C, t) { return (U0 / R) * Math.exp(-t / (R * C)); }
@@ -335,6 +355,19 @@
     chk('q = It：I=2 A、t=3 s ⇒ 6 C', passedCharge(2, 3), 6, 1e-12);
     chk('电子数 n = It/e', passedElectrons(1, 1), 1 / E_CHARGE, 1e-6);
 
+    /* —— 恒压电源链（本课前提）—— */
+    chk('I = U/R：U=6 V、R=3 Ω ⇒ 2 A', currentFromU(6, 3), 2, 1e-12);
+    chk('U 不变 ⇒ I 不变（恒定电流）', currentFromU(6, 3), currentFromU(6, 3), 0);
+    chk('U 加倍 ⇒ I 加倍', currentFromU(12, 3) / currentFromU(6, 3), 2, 1e-12);
+    chk('E = U/L：U=6 V、L=1 m ⇒ 6 V/m', fieldFromU(6, 1), 6, 1e-12);
+    chk('Q = CU：C=1e-4 F、U=300 V ⇒ 0.03 C', electrodeCharge(1e-4, 300), 0.03, 1e-15);
+    chk('U 变 ⇒ 极板电荷量跟着变（不是"保持不变"）', electrodeCharge(1e-4, 600) / electrodeCharge(1e-4, 300), 2, 1e-12);
+    chk('R = ρL/S', resistance(1.7e-8, 0.1, 1e-6), 1.7e-3, 1e-12);
+    chk('搬运速率 = 导线电流（不是独立旋钮）', pumpRateEquals(1.25), 1.25, 0);
+    /* 全链自洽：U → I → v，同一条链上数字必须对得上 */
+    var vChained = driftSpeed(currentFromU(6, 3), nCu, 1e-6);
+    chk('U=6V,R=3Ω 的漂移速率 = I/(nqS)', vChained, driftSpeed(2, nCu, 1e-6), 1e-18);
+
     /* —— 瞬间电流 —— */
     chk('RC 放电 t = τ 时 U 降到 1/e', rcDecay(300, 1, 1e-4, 1e-4), 300 / Math.E, 1e-9);
     chk('t = 5τ 时电流不足初值 1%', rcCurrent(300, 1, 1e-4, 5e-4) / (300 / 1) < 0.01 ? 1 : 0, 1, 0);
@@ -364,6 +397,8 @@
     transitTime: transitTime, fieldTime: fieldTime,
     driftPxPerSec: driftPxPerSec, passedCharge: passedCharge, passedElectrons: passedElectrons,
     accel: accel, peakSpeed: peakSpeed, avgDrift: avgDrift, steadyAvg: steadyAvg,
+    resistance: resistance, currentFromU: currentFromU, fieldFromU: fieldFromU,
+    electrodeCharge: electrodeCharge, isSteady: isSteady, pumpRateEquals: pumpRateEquals,
     rcDecay: rcDecay, rcCurrent: rcCurrent, tauRC: tauRC, dischargeTotalCharge: dischargeTotalCharge,
     capacityCharge: capacityCharge, dischargeCurrent: dischargeCurrent,
     enduranceKm: enduranceKm, standbyCurrent: standbyCurrent,
@@ -639,7 +674,9 @@
       chk('中性粒子会离开相遇点', Math.hypot(neutralPos(np, 2, 46).x, neutralPos(np, 2, 46).y) > 10 ? 1 : 0, 1, 0);
       chk('走满行程后停住', Math.hypot(neutralPos(np, 99, 46).x, neutralPos(np, 99, 46).y), 46, 1e-6);
       chk('刚出生时完全不透明', alphaOf(np, 0.1), 1, 1e-9);
-      chk('过了停留期开始淡出', alphaOf(np, NEUTRAL_LIFE + 1.6), 0, 1e-9);
+      /* 中性粒子**不淡出**：留在画面上，学生能数出中和了几对 */
+      chk('中性粒子长期留存（可数）', alphaOf(np, 999), 1, 1e-9);
+      chk('中性粒子不会消失', alphaOf(np, NEUTRAL_LIFE + 60), 1, 1e-9);
       chk('迁移分数封顶为 1', travelFrac(99, 0, 100, 100), 1, 1e-12);
       chk('迁移分数不为负', travelFrac(-5, 0, 100, 100), 0, 1e-12);
       return { pass: fails.length === 0, total: R.length, failed: fails.length, results: R, fails: fails };
@@ -1108,7 +1145,7 @@
       my0: H * 0.14,  my1: H * 0.855,                       // 主图上下
       cx: (card && W >= 720) ? W * 0.685 : W,               // 概念卡左缘
       cy: H * 0.24,
-      legendX: W * 0.075, legendY: H - 152 * k             // 图例：抬到底部字幕之上（留足间距）
+      legendX: W * 0.075, legendY: H - 96 * k             // 图例：抬到底部字幕之上（留足间距）
     };
   }
   function mx(L, u) { return L.mx0 + (L.mx1 - L.mx0) * u; }
@@ -1338,10 +1375,11 @@
       cn: S.revealedP ? '这个装置就是电源：它把电子从 A 搬回 B' : '加一个装置：它能补上失去的电子',
       en: 'Power source',
       card: S.revealedP ? [
-        { label: '装置', text: '能把电子从 A 搬运到 B', color: K.neg },
+        { label: '装置', text: '能把电子从 A 搬回 B', color: K.neg },
         { label: '名称', text: '电源（power source）', color: K.text },
-        { label: '电极', text: 'A、B 是它的两个电极' },
-        { label: '关键', text: '它不产生电荷，只搬运电荷', color: K.neg }
+        { label: '作用', text: '维持两极电压 U 不变' },
+        { formula: 'I = U / R' },
+        { note: 'U 由电源给，I 由电路定', color: K.dim }
       ] : [
         { label: '问题', text: '怎么才能得到持续不断的电流？' },
         { label: '条件', text: '两极之间始终存在电势差' },
@@ -1365,7 +1403,7 @@
       Z.wirePath(ctx, [[ax, yB], [ax, pcy + ph / 2]], { w: 3 * k });
       Z.wirePath(ctx, [[bx1, yB], [bx1, pcy + ph / 2]], { w: 3 * k });
       Z.battery(ctx, bcx, yB, bw, bh, { k: k });
-      Z.T(ctx, S.revealedP ? '电池（电源）' : '某种装置', bcx, yB + 40 * k, { size: 20 * k, align: 'center', color: K.dim });
+      Z.T(ctx, S.revealedP ? '电池（电源）' : '某种装置', bcx, yB + 38 * k, { size: 19 * k, align: 'center', color: K.dim });
     });
     /* ② 极板上的电荷（搬运够 = 不变；不够 = 一格一格掉） */
     D(ctx, S.r1, function () {
@@ -1382,9 +1420,9 @@
       Z.chargeFlow(ctx, [[ax, yB], [bcx - bw / 2, yB]], 3, S.pumpPhase, { kind: 'neg', r: 4.4 * k });
       Z.chargeFlow(ctx, [[bcx + bw / 2, yB], [bx1, yB]], 3, S.pumpPhase, { kind: 'neg', r: 4.4 * k });
       /* 搬运速率指示：装置处一圈随搬运速率变强的光晕 */
-      if (S.pumpSpeed > 0.05) {
+      if (S.Isteady > 0.02) {
         var g = ctx.createRadialGradient(bcx, yB, 0, bcx, yB, bw * 0.75);
-        g.addColorStop(0, 'rgba(95,196,238,' + (0.18 * Math.min(1, S.pumpSpeed)).toFixed(3) + ')');
+        g.addColorStop(0, 'rgba(95,196,238,' + (0.26 * Math.min(1, S.Isteady / 4)).toFixed(3) + ')');
         g.addColorStop(1, 'rgba(0,0,0,0)');
         ctx.save(); ctx.fillStyle = g;
         ctx.beginPath(); ctx.arc(bcx, yB, bw * 0.75, 0, Math.PI * 2); ctx.fill(); ctx.restore();
@@ -1392,8 +1430,9 @@
     });
     /* ④ 稳态判据打在画面上 */
     D(ctx, S.r3, function () {
-      Z.T(ctx, S.steady ? '搬运 1.00 A ＝ 流失 1.00 A ⇒ 电荷量不变' : '搬运 ' + P.fmt(S.pumpSpeed, 2) + ' A ＜ 流失 1.00 A ⇒ 正在失衡',
-        mx(L, 0.5), my(L, 0.88), { size: 20 * k, align: 'center', color: S.steady ? K.text : K.neg });
+      /* 恒压源：电源维持 U，电流由 U/R 决定 —— 这句话必须打在主画面上 */
+      Z.T(ctx, 'U = ' + P.fmt(S.U, 1) + ' V（电源维持） · I = U/R = ' + P.fmt(S.Isteady, 2) + ' A（电路决定）',
+        mx(L, 0.5), my(L, 0.93), { size: 19 * k, align: 'center', color: K.text });
     });
   }
 
@@ -1495,7 +1534,7 @@
         { label: '另外的', text: '又来补上' },
         { label: '结果', text: '各处电荷量保持不变', color: K.text },
         { formula: 'E 不随时间变化' },
-        { note: '⇒ 恒定电场（steady electric field）' }
+        { note: '⇒ 恒定电场', color: K.text }
       ],
       rings: [[mx(L, 0), my(L, 0.14), (L.mx1 - L.mx0), (L.my1 - L.my0) * 0.6]]
     });
@@ -1537,7 +1576,9 @@
         { label: '碰撞', text: '阻碍电荷运动（减速）', color: K.neg },
         { note: '两者都有作用' },
         { formula: 'v̄ 不随时间变化' },
-        { note: 'E = ' + P.fmt(S.EfieldmV, 1) + ' mV/m ⇒ v̄ = ' + P.sci(S.vavg, 2) + ' m/s' }
+        { note: 'U = ' + P.fmt(S.Useg, 2) + ' V ⇒ E = U/L = ' + P.fmt(S.EfieldV, 3) + ' V/m' },
+        { note: '⇒ v̄ = ' + P.sci(S.vavg, 2) + ' m/s', color: K.text },
+        { note: 'v̄ 不随时间变化 ⇒ 电流恒定', color: K.text }
       ],
       rings: [[mx(L, 0), my(L, 0.04), (L.mx1 - L.mx0), (L.my1 - L.my0) * 0.72]]
     });
@@ -1566,6 +1607,8 @@
     D(ctx, S.r1, function () {
       Z.wirePath(ctx, [[ax, yAvg], [ax + aw, yAvg]], { color: 'rgba(255,255,255,0.75)', w: 2.2 * k, dash: [7, 5] });
       Z.T(ctx, 'v̄', ax + aw + 24 * k, yAvg, { size: 22 * k, color: K.text });
+    Z.T(ctx, 'U = ' + P.fmt(S.Useg, 1) + ' V（电源给）  ⇒  E = U/L = ' + P.fmt(S.EfieldV, 1) + ' V/m（决定的）',
+      ax, ay - 26 * k, { size: 19 * k, color: K.dim });
     });
     /* ② 一个电子沿着锯齿轨迹反复跑：加速段越跑越快（点子间距变大），
           到折点"撞一下"（闪光 + 速度归零），再重新加速 —— 这就是 v̄ 不变的画面 */
@@ -1724,6 +1767,7 @@
         { label: '形成', text: '电荷的定向移动形成电流' },
         { label: '定义', text: '电荷量 q 与时间 t 的比值' },
         { formula: 'I = q / t' },
+        { note: 'I 由 U/R 决定，不是旋钮', color: K.dim },
         { label: '单位', text: 'C/s ⇒ 安培（A）' }
       ],
       rings: [[mx(L, 0.30), my(L, 0.06), (L.mx1 - L.mx0) * 0.14, (L.my1 - L.my0) * 0.62]]
@@ -1938,7 +1982,7 @@
       card: [
         { label: '数密度', text: 'n = ρN_A/M ≈ 8.4×10²⁸ m⁻³' },
         { formula: 'v = I / (neS)' },
-        { note: 'I = ' + P.fmt(S.Idrift, 1) + ' A，S = 1 mm²' },
+        { note: 'U = ' + P.fmt(S.cU, 1) + ' V ⇒ I = U/R = ' + P.fmt(S.Idrift, 2) + ' A，S = 1 mm²' },
         { note: 'v = ' + P.sci(S.vDrift, 2) + ' m/s', color: K.text },
         { note: '穿 1 m 需 ' + P.fmt(S.tTransit / 3600, 2) + ' 小时', color: K.neg }
       ],
@@ -2293,32 +2337,36 @@
 
     /* ---------------- 幕二 · 电源与电场（环节②） ---------------- */
     {
-      act: 'a2', title: '造一个装置 P：不断把电子从 A 搬回 B',
-      hint: '拖「装置 P 搬运速率」，拖到与导线流失速率相等时，两极电荷量不再变化',
+      act: 'a2', title: '造一个装置 P：把电子不断搬回 B，维持两极电压',
+      hint: '拖「电源电压 U」——电压一变，板上的电荷量、电路里的电流、电子跑的速度会一起跟着变',
       note: '在回路里加一个装置 P：把从 B 跑到 A 的电子，从 A 取走、再送回 B。' +
-            '只要 P 补充电子的速率恰好等于导线流失的速率，两极的电荷量就**保持不变**，' +
-            '两极间的电势差也就不变。这个装置 P 就是**电源**，A、B 是电源的两个电极。',
-      formula: '电源（power source）：能把电子从 A 搬运到 B 的装置',
-      allow: { pump: { label: '装置 P 搬运速率', min: 0, max: 1.4, step: 0.05, unit: 'A' } },
+            '这样两极的电荷量就不会被"用光"，两极间的**电压 U 由电源维持住、不随时间变化** —— ' +
+            '这就是**恒定电源**（恒压源）。这个装置 P 就是**电源**，A、B 是它的两个电极。\n\n' +
+            '注意：**搬运多快不是外部旋钮，而是由 U 和电路自己决定的**。' +
+            '把 U 调大，两极电荷量 Q = CU 跟着变大、电流 I = U/R 跟着变大 —— 三件事是同一条链。',
+      formula: '电源：维持两极电压 U 不变 ｜ Q = C·U，I = U/R',
+      allow: { eV: { label: '电源电压 U', min: 1, max: 12, step: 0.5, unit: 'V' } },
       scene: 'source',
-      bullets: [{ text: 'P 把电子从 A 取走，补回 B' }, { text: '搬运速率 = 流失速率 ⇒ 电荷量不变' }, { text: '这个装置 P 就叫电源' }],
-      caption: '电源把电子不断搬回 B，两极电势差才能一直维持',
-      captionEn: 'The device P',
-      init: function (S) { S.pump = 1.0; }
+      bullets: [{ text: 'P 把电子从 A 取回 B，两极电荷不被用光' }, { text: '两极电压 U 由电源维持不变' }, { text: 'Q = CU、I = U/R 都随 U 变' }],
+      caption: '电源维持两极电压不变 —— 这才是"恒定"的来源',
+      captionEn: 'Constant voltage source',
+      init: function (S) { S.eV = 6; }
     },
     {
-      act: 'a2', title: '搬运速率跟不上会怎样',
-      hint: '把「搬运速率」拖到 1.00 A 以下，看两极电荷量和电流开始变',
-      note: '把搬运速率拖到 1.00 A 以下：A 极的电子只出不进、电荷量越攒越多，' +
-            '两极电势差开始变小，导线中的电流也跟着变小 —— 电流**不再恒定**。' +
-            '再拖回 1.00 A，一切重新稳定。所以“恒定”来自**搬运与流失的动态平衡**。',
-      formula: '搬运速率 = 导线流失速率  ⇒  恒定电流',
-      allow: { pump: { label: '装置 P 搬运速率', min: 0, max: 1.4, step: 0.05, unit: 'A' } },
+      act: 'a2', title: '电压不变，换一个外电阻会怎样',
+      hint: '拖「外电路电阻 R」——U 不动，R 一变，电流 I = U/R 和电子速度一起变',
+      note: '电源的任务只有一条：**把电压维持住**。所以 U 不变、两极的电荷量也就不变。\n\n' +
+            '那电流为什么会变？因为**电路自己**决定：I = U/R。把外电路的电阻 R 调小，' +
+            '电流就变大 —— 电源并没有"努力多搬"什么，它只是维持住 U；' +
+            '导线里跑多快，是 U 和 R 一起决定的。\n\n' +
+            '反过来讲：只要 U 和 R 都不变，**电流就不随时间变化**，这就是恒定电流。',
+      formula: 'U 不变 ｜ I = U/R ｜ v = I/(nqS)',
+      allow: { eR: { label: '外电路电阻 R', min: 1, max: 12, step: 0.5, unit: 'Ω' } },
       scene: 'source',
-      bullets: [{ text: '搬运 < 流失 ⇒ 电荷失衡' }, { text: '电势差变小 ⇒ 电流变小' }, { text: '搬运 = 流失 ⇒ 电流恒定' }],
-      caption: '“恒定”来自搬运与流失的动态平衡',
-      captionEn: 'Balance of rates',
-      init: function (S) { S.pump = 0.6; }
+      bullets: [{ text: '电源只负责维持 U 不变' }, { text: '电流由电路决定：I = U/R' }, { text: 'U、R 都不变 ⇒ 恒定电流' }],
+      caption: '电压由电源维持，电流由电路决定 —— 两者不能混为一谈',
+      captionEn: 'Current is set by U and R',
+      init: function (S) { S.eV = 6; S.eR = 3; }
     },
     {
       act: 'a2', title: '抽水机类比：只类比“维持差额”这一点',
@@ -2351,32 +2399,36 @@
     },
     {
       act: 'a3', title: '动态平衡：电荷“你来我走”，但分布不变',
-      hint: '拖「流动进度」，看电子一直在换，可分布刻度始终不动',
-      note: '堆积在各处的电荷，有“走”的、有“来”的，但**各处的电荷量保持不变**，' +
-            '导体处于动态平衡。与静电场的最大不同是：激发电场的电荷数目不变，' +
-            '却一直处在“你来我走”的变化中，因此**内部电场强度不为 0**。' +
-            '这种由稳定分布的电荷产生的稳定电场，叫**恒定电场**（steady electric field）。',
-      formula: '电荷分布不变 ⇒ 电场不变 ⇒ 恒定电场',
-      allow: { driftPhase: { label: '流动进度', min: 0, max: 1, step: 0.01 } },
+      hint: '拖「电源电压 U」——电压变了，电子跑得快慢跟着变，但各处的电荷分布始终不变',
+      note: '电源维持住电压 U，导体内部就有了一个**稳定的电场**，自由电荷在它作用下定向移动。\n\n' +
+            '堆积在各处的电荷，有"走"的、有"来"的，但**各处的电荷量保持不变** —— 叫**动态平衡**。' +
+            '与静电场的最大不同是：激发电场的电荷数目不变，却一直处在"你来我走"的变化中，' +
+            '因此**内部电场强度不为 0**。\n\n' +
+            '把电压调大，电子跑得更快；把电压调小，跑得更慢 —— 但无论快慢，' +
+            '"队列的形状"（电荷分布）都不变。这种由稳定分布的电荷产生的稳定电场，叫**恒定电场**。',
+      formula: '电源维持 U ⇒ 稳定的电场 ⇒ 电荷分布不变（恒定电场）',
+      allow: { fU: { label: '电源电压 U', min: 0.5, max: 6, step: 0.25, unit: 'V' } },
       scene: 'flow',
-      bullets: [{ text: '有的流走，另外的又来补上' }, { text: '各处电荷量保持不变' }, { text: '电荷分布不变 ⇒ 恒定电场' }],
+      bullets: [{ text: '有的流走，另外的又来补上' }, { text: '各处电荷量保持不变' }, { text: '分布不变 ⇒ 恒定电场' }],
       caption: '静电平衡是“站住了”，恒定电场是“队伍不停、队形不变”',
       captionEn: 'Dynamic equilibrium',
-      init: function (S) { S.driftPhase = 0.35; }
+      init: function (S) { S.fU = 2; }
     },
     {
       act: 'a3', title: '加速—碰撞：为什么平均速率不变',
-      hint: '拖「场强 E」，看锯齿的峰值与平均线一起抬高，但每一段都是“加速—碰撞”',
+      hint: '拖「导线两端的电压 U」——场强 E = U/L 跟着变，锯齿与平均线一起抬，但每一段都是“加速—碰撞”',
       note: '恒定电场对电荷施加静电力，促使电荷加速定向运动；电荷在运动过程中又与其他粒子碰撞、受到阻碍。' +
-            '于是电荷**加速—碰撞—加速—碰撞**，定向运动的**平均速率不随时间变化**。' +
-            '要注意从正、反两方面认识：静电力促使电荷运动，碰撞又阻碍电荷运动，两者都在起作用。',
-      formula: '静电力加速 ＋ 碰撞阻碍 ⇒ v̄ 不随时间变化 ⇒ 恒定电流',
-      allow: { Efield: { label: '导体内部场强 E', min: 5, max: 50, step: 0.5, unit: 'mV/m' } },
+            '于是电荷**加速—碰撞—加速—碰撞**，定向运动的**平均速率不随时间变化**。\n\n' +
+            '注意这里的因果关系：**电压 U 是电源给的，场强 E = U/L 是它决定的**，' +
+            '不是反过来"先有 E 再有 U"。把 U 调大，E 变大，静电力和平均速率都跟着变大。\n\n' +
+            '要从正、反两方面认识：静电力促使电荷运动，碰撞又阻碍电荷运动，两者都在起作用。',
+      formula: 'E = U/L（L = 5 m） ⇒ v̄ = eEτ/(2m)，不随时间变化',
+      allow: { Useg: { label: '这段导线（5 m）两端的电压 U', min: 0.05, max: 2.5, step: 0.05, unit: 'V' } },
       scene: 'sawtooth',
       bullets: [{ text: '静电力让电荷加速' }, { text: '碰撞让电荷减速归零' }, { text: '结果：v̄ 不随时间变化' }],
       caption: '加速—碰撞—加速—碰撞：大量自由电荷的平均速率不随时间变化',
       captionEn: 'Accelerate and collide',
-      init: function (S) { S.Efield = 1000; }
+      init: function (S) { S.Useg = 0.5; }
     },
     {
       act: 'a3', title: '恒定电流：串联一只电流表看看',
@@ -2409,21 +2461,23 @@
     /* ---------------- 幕四 · 电流的强弱（环节④） ---------------- */
     {
       act: 'a4', title: '定义式 I = q/t',
-      hint: '拖「电流 I」和「时间 t」，看通过横截面的电荷量 q = It',
+      hint: '拖「电源电压 U」和「通电时间 t」——电流由 I = U/R 决定，电荷量 q = It 跟着出来',
       note: '单位时间内通过导体**横截面**的电荷量越多，电流就越大。' +
-            '把通过横截面的电荷量 q 与所用时间 t 的比值叫作**电流**：I = q/t。' +
+            '把通过横截面的电荷量 q 与所用时间 t 的比值叫作**电流**：I = q/t。\n\n' +
+            '**注意不要把定义式当成"可调旋钮"**：I 不是随便给的，它由电源电压和电路电阻决定（I = U/R）。' +
+            '定义式说的是"给了多大的 I，就对应多大的 q/t"。\n\n' +
             '为什么用电荷量而不是粒子数定义？因为不同粒子带的电荷量可能不同（如二价离子），' +
             '粒子数相同而电荷量不同的情况是存在的。',
-      formula: 'I = q/t   （单位：C/s，即安培 A）',
+      formula: 'I = U/R（电路决定） ｜ I = q/t（定义） ｜ q = It',
       allow: {
-        Idefine: { label: '电流 I', min: 0.2, max: 3, step: 0.1, unit: 'A' },
-        tdefine: { label: '时间 t', min: 1, max: 10, step: 0.5, unit: 's' }
+        dU: { label: '电源电压 U', min: 0.5, max: 6, step: 0.25, unit: 'V' },
+        tdefine: { label: '通电时间 t', min: 1, max: 10, step: 0.5, unit: 's' }
       },
       scene: 'define',
-      bullets: [{ text: '“横截面”要通过的电荷量来数' }, { text: 'I = q/t，比值定义电流' }, { text: '用电荷量而非粒子数定义' }],
+      bullets: [{ text: '“横截面”要通过的电荷量来数' }, { text: 'I = q/t 是定义式' }, { text: 'I 由 U/R 决定，不是旋钮' }],
       caption: '单位时间内通过横截面的电荷量越多，电流就越大',
       captionEn: 'Electric current',
-      init: function (S) { S.Idefine = 1.0; S.tdefine = 4; }
+      init: function (S) { S.dU = 2; S.dR = 2; S.tdefine = 4; }
     },
     {
       act: 'a4', title: '单位：A、mA、μA 与教材练习 1',
@@ -2492,17 +2546,19 @@
     },
     {
       act: 'a5', title: '算一算：铜导线里的电子跑多慢',
-      hint: '拖「电流 I」，看定向速率 v = I/(neS) 怎么变',
-      note: '横截面积 S = 1 mm²、电流 I = 1 A 的铜导线：电子数密度 n = ρN_A/M ≈ 8.4×10²⁸ m⁻³，' +
-            '由 v = I/(neS) 算出**定向移动速率只有 10⁻⁵ m/s 量级**。' +
-            '按这个速率，一个电子通过 1 m 长的导线要**几个小时**—— 这跟你开关电灯的感觉完全不符。',
-      formula: 'v = I/(neS) ≈ 7.5×10⁻⁵ m/s   （I = 1 A，S = 1 mm²）',
-      allow: { Idrift: { label: '电流 I', min: 0.2, max: 5, step: 0.1, unit: 'A' } },
+      hint: '拖「电源电压 U」——电流 I = U/R 变，定向速率 v = I/(neS) 跟着变',
+      note: '横截面积 S = 1 mm² 的铜导线：电子数密度 n = ρN_A/M ≈ 8.4×10²⁸ m⁻³。\n\n' +
+            '**注意：电流不是自己来的** —— 电源给一个电压 U，电路里才有 I = U/R，' +
+            '再由 v = I/(neS) 算出**定向移动速率只有 10⁻⁵ m/s 量级**。\n\n' +
+            '按这个速率，一个电子通过 1 m 长的导线要**几个小时**—— 这跟你开关电灯的感觉完全不符。' +
+            '（原因在下一步：电场以光速建立。）',
+      formula: 'U → I = U/R → v = I/(neS) ≈ 10⁻⁵ m/s',
+      allow: { cU: { label: '电源电压 U', min: 0.5, max: 6, step: 0.25, unit: 'V' } },
       scene: 'driftnum',
       bullets: [{ text: 'n 由铜的密度与摩尔质量算出' }, { text: 'v = I/(neS) 只有 10⁻⁵ m/s' }, { text: '穿过 1 m 要几个小时' }],
       caption: '电子定向移动只有 10⁻⁵ m/s，穿过 1 m 要几个小时',
       captionEn: 'Drift speed',
-      init: function (S) { S.Idrift = 1; }
+      init: function (S) { S.cU = 3; }
     },
     {
       act: 'a5', title: '那灯为什么立刻亮',
@@ -2577,6 +2633,10 @@
     spark: 0.6,
     tn: 0, U0: 300,
     pump: 1.0,
+    eV: 6, eR: 3,          /* 恒定电源：电压 U、外电路电阻 R */
+    fU: 2,                 /* 步 8：动态平衡的电压 */
+    Useg: 2,               /* 步 9：一段导线两端的电压 */
+    dU: 2, dR: 2,          /* 步 12：定义式场景的 U 与 R */
     flowq: 0.7,
     driftPhase: 0.35,
     Uwire: 5, Efield: 17.5,         // mV/m
@@ -2584,7 +2644,7 @@
     Idefine: 1.0, tdefine: 4,
     Iunit: 50, unitIdx: 2,
     theta: 30, q1: 2, q2: 3,
-    tFrac: 0.45, Idrift: 1, lenL: 1,
+    tFrac: 0.45, cU: 3, Idrift: 1, lenL: 1,
     capAh: 94, capT: 5, kmh: 72,
     chainP: 5
   };
@@ -2602,8 +2662,11 @@
      真实漂移速率 ~10⁻⁵ m/s，直接照搬肉眼看不见，所以按固定比例放大。
      取 8×10⁵ ⇒ I = 1 A 时约 60 px/s（一屏 800 px 走完约 13 s），肉眼看得清。
      关键：放大的是**比例常数**，不是"随便动" —— 同一导体下 v_px 仍严格 ∝ I。 */
+  var FIX_R = 3;         // 几个场景共用的固定外电阻 (Ω)
+  var L_ACC = 5;         // 加速—碰撞场景里那段导线的长度 (m)：U/L 落在真实量级
   var K_VIEW = 8e5;
   var V_PX_MIN = 4;            // 视觉下限（仅当电流极小时，避免"看起来完全静止"）
+  var V_PX_MAX = 240;          // 视觉上限（电流很大时不至于糊成一团；比例关系在读数里看）
 
   /* ---------------- 点选层状态（可点系统的全部可变部分） ---------------- */
   var CLICK = {
@@ -2694,11 +2757,19 @@
     o.animOn = !!(A && !A.frozen && A.playing);
     o.playing = !!(A && A.playing);
 
-    /* —— 装置 P —— */
-    o.pumpSpeed = s.pump;
-    o.steady = Math.abs(s.pump - 1) < 0.03;
-    if (o.steady) { o.nA = 6; o.nB = 6; o.I = 1.0; }
-    else { var f = clamp(s.pump, 0.1, 1.2); o.nA = Math.max(1, Math.round(6 * f)); o.nB = o.nA; o.I = Math.min(s.pump, 1); }
+    /* —— 恒压电源（要求：本课面对的是恒定电源，U 不变）——
+       链路写死：U（电源维持） → I = U/R（电路决定） → v = I/(nqS)（微观）
+       图象上的一切都从这条链上取，不许再"凭空给电流 / 给搬运速率"。 */
+    o.U = s.eV;                                     // 两极电压（由电源维持）
+    o.R = s.eR;                                     // 外电路电阻
+    o.EfieldSrc = P.fieldFromU(s.eV, L_SEG);        // 极板间场强 E = U/L
+    o.Qplate = P.electrodeCharge(C_SYS, s.eV);      // 极板电荷量 Q = C·U（随 U 变！）
+    o.Isteady = P.currentFromU(s.eV, s.eR);         // 电流 I = U/R（电路决定）
+    o.pumpSpeed = o.Isteady;                        // "搬运速率"就是导线里的电流本身
+    o.nA = Math.max(1, Math.round(6 * clamp(s.eV / 12, 0.25, 1)));
+    o.nB = o.nA;
+    o.I = o.Isteady;
+    o.steady = true;                                // 恒压源 + 定值电阻 ⇒ 电流恒定
     o.sparkOn = s.spark < 0.05 ? 0 : Math.min(1, 0.35 + 0.65 * s.spark);
 
     /* —— 导线内部场强 —— */
@@ -2707,16 +2778,23 @@
     o.Iamm = s.Uamm / R_LAMP;
     o.needle = clamp(o.Iamm / 3, 0, 1);
 
-    /* —— 加速—碰撞 —— */
-    o.EfieldmV = s.Efield;                          // mV/m（滑杆量纲）
-    o.EfieldV = s.Efield / 1000;                    // V/m
+    /* —— 步 8：动态平衡（电压 → 内部场强 → 电子速率）—— */
+    o.fU = s.fU;
+    o.fE = P.fieldFromU(s.fU, L_SEG);               // E = U/L
+    o.fI = P.currentFromU(s.fU, FIX_R);             // I = U/R（R 取固定值）
+    /* —— 步 9：加速—碰撞（电压 → 场强，而不是直接给 E）—— */
+    o.Useg = s.Useg;
+    o.EfieldV = P.fieldFromU(s.Useg, L_ACC);        // E = U/L（这段导线 L=100 m）
+    o.EfieldmV = o.EfieldV * 1000;                  // 显示用 mV/m
     o.aAcc = P.accel(o.EfieldV);
     o.vpeak = P.peakSpeed(o.EfieldV);
     o.vavg = P.avgDrift(o.EfieldV);
     o.vScale = clamp(s.Efield / 50, 0.28, 1);
 
-    /* —— 定义式 —— */
-    o.qDefine = P.charge(s.Idefine, s.tdefine);
+    /* —— 步 12 定义式：电流由 U/R 决定，不是凭空给的 —— */
+    o.dU = s.dU; o.dR = s.dR;
+    o.Idefine = P.currentFromU(s.dU, s.dR);         // I = U/R
+    o.qDefine = P.charge(o.Idefine, s.tdefine);
     o.nDefine = P.electrons(o.qDefine);
 
     /* —— 单位 —— */
@@ -2736,7 +2814,8 @@
 
     /* —— 算例 —— */
     o.nCu = P.copperCarrierDensity();
-    o.vDrift = P.driftSpeed(s.Idrift, o.nCu, 1e-6);
+    o.cU = s.cU; o.Idrift = P.currentFromU(s.cU, FIX_R);   // 电流由电压决定
+    o.vDrift = P.driftSpeed(o.Idrift, o.nCu, 1e-6);
     o.tTransit = P.transitTime(1, o.vDrift);
 
     /* —— 灯立刻亮 —— */
@@ -2759,23 +2838,25 @@
     var Iscene;
     switch (scn) {
       case 'transient': Iscene = o.I; break;
-      case 'source':    Iscene = Math.min(s.pump, 1.4); break;
+      case 'source':    Iscene = o.Isteady; break;
       case 'pump':      Iscene = s.flowq; break;
       case 'field':     Iscene = s.Uwire / 2; break;      // U 越大 → 漂移越快
+      case 'flow':      Iscene = o.fI; break;
+      case 'sawtooth':  Iscene = P.currentFromU(s.Useg, FIX_R); break;
       case 'ammeter':   Iscene = o.Iamm; break;
-      case 'define':    Iscene = s.Idefine; break;
-      case 'units':     Iscene = o.Iampere; break;
-      case 'micro':     Iscene = s.Idrift; break;
-      case 'driftnum':  Iscene = s.Idrift; break;
+      case 'define':    Iscene = o.Idefine; break;
+      case 'units':     Iscene = o.Iampere > 0 ? Math.max(0.05, Math.min(o.Iampere, 3)) : 1; break;
+      case 'micro':     Iscene = o.Idrift; break;
+      case 'driftnum':  Iscene = o.Idrift; break;
       case 'lightspeed': Iscene = 1; break;
-      case 'capacity':  Iscene = o.Icap; break;
+      case 'capacity':  Iscene = Math.min(o.Icap / 12, 2); break;   // 宏观放电电流折算到可见量级
       default:          Iscene = 1;
     }
     o.Iscene = Iscene;
     o.vDrift = Iscene > 0 ? P.driftSpeed(Iscene, nCu, 1e-6) : 0;        // 真实物理速率
     var raw = Iscene > 0 ? P.driftPxPerSec(Iscene, nCu, 1e-6, K_VIEW) : 0;
     o.vPxRaw = raw;                                                     // 未设下限（用于验证 ∝I）
-    o.vPx = raw > 0 ? Math.max(V_PX_MIN, raw) : 0;                       // 屏幕速度（含可见性下限）
+    o.vPx = raw > 0 ? Math.min(V_PX_MAX, Math.max(V_PX_MIN, raw)) : 0;   // 屏幕速度（含上下限）
 
     /* 用刚算出的 vPx 重算相位（相位 ∝ I） */
     var _vpr = o.vPxRaw;
@@ -2866,15 +2947,16 @@
   var AUTODRV = {
     intro:        { key: 'spark',   from: 0.15, to: 1,    dur: 6.5, step: 0.05 },
     transient:    { key: 'tn',      from: 0,    to: 1,    dur: 8,   step: 0.005 },
-    source:       { key: 'pump',    from: 1.35, to: 0.3,  dur: 9,   step: 0.05 },
+    source:       { key: 'eV',      from: 2,    to: 12,   dur: 9,   step: 0.5 },
     pump:         { key: 'flowq',   from: 0.25, to: 1,    dur: 7,   step: 0.01 },
+    sourceAuto:   { key: 'eV',      from: 2,    to: 12,   dur: 9,   step: 0.5 },
     field:        { key: 'Uwire',   from: 1,    to: 10,   dur: 10,  step: 0.5 },
     ammeter:      { key: 'Uamm',    from: 0.5,  to: 5,    dur: 9,   step: 0.25 },
     define:       { key: 'tdefine', from: 1,    to: 10,   dur: 8,   step: 0.5 },
     units:        { key: 'Iunit',   from: 1,    to: 800,  dur: 9,   step: 0.1 },
     crosssec:     { key: 'theta',   from: 0,    to: 80,   dur: 9,   step: 1 },
     micro:        { key: 'tFrac',   from: 0.05, to: 1,    dur: 7,   step: 0.01 },
-    driftnum:     { key: 'Idrift',  from: 0.2,  to: 5,    dur: 9,   step: 0.1 },
+    driftnum:     { key: 'cU',     from: 0.5,  to: 6,    dur: 9,   step: 0.25 },
     lightspeed:   { key: 'lenL',    from: 0,    to: 3,    dur: 9,   step: 0.05 },
     capacity:     { key: 'capT',    from: 1,    to: 10,   dur: 9,   step: 0.5 }
   };
@@ -2900,19 +2982,28 @@
       case 'intro': return [['火花放电', x.sparkOn > 0.02 ? '正在放电' : '等待'], ['小灯泡', '一直亮']];
       case 'transient': return [['两极电势差 U', P.fmt(x.U, 1) + ' V'], ['导线电流 I', P.fmt(x.I, 2) + ' A'],
         ['经过的电荷 q', P.fmt(x.qPass, 4) + ' C'], ['两极电荷量', x.nA + ' / 6 格']];
-      case 'source': return [['装置 P 搬运速率', P.fmt(x.pumpSpeed, 2) + ' A'], ['导线流失速率', '1.00 A'],
-        ['两极电荷量', x.steady ? '保持不变' : '正在失衡'], ['导线电流 I', x.steady ? '1.00 A' : P.fmt(x.I, 2) + ' A']];
+      case 'source': return [['电源电压 U', P.fmt(st.eV, 1) + ' V（由电源维持）'],
+        ['外电路电阻 R', P.fmt(st.eR, 1) + ' Ω'],
+        ['电流 I = U/R', P.fmt(x.Isteady, 2) + ' A（电路决定）'],
+        ['极板电荷量 Q = CU', P.fmt(x.Qplate, 4) + ' C'],
+        ['电子漂移速率 v', P.sci(x.vDrift, 2) + ' m/s']];
       case 'pump': return [['抽水流量', P.fmt(x.flowq, 2)], ['维持结果', '水位差 / 电势差 都不变']];
       case 'field': return [['导线两端电压 U', P.fmt(st.Uwire, 1) + ' V'], ['导线长度 L', '0.10 m'],
         ['内部场强 E = U/L', P.fmt(x.Ewire, 1) + ' V/m'], ['静电平衡时 E', '0（形成冲突）']];
-      case 'flow': return [['电荷分布', '不随时间变化'], ['电场 E', '不随时间变化'], ['电子运动', '一直在定向移动']];
+      case 'flow': return [['电源电压 U', P.fmt(st.fU, 2) + ' V'], ['内部场强 E = U/L', P.fmt(x.fE, 1) + ' V/m'],
+        ['电流 I = U/R', P.fmt(x.fI, 2) + ' A'], ['电荷分布', '始终不变']];
       case 'ammeter': return [['电源电压 U', P.fmt(st.Uamm, 1) + ' V'], ['电路总电阻', '2 Ω'],
         ['电流 I = U/R', P.fmt(x.Iamm, 3) + ' A'], ['电流表示数', '保持恒定']];
-      case 'sawtooth': return [['导体内部场强 E', P.fmt(st.Efield, 1) + ' mV/m'], ['加速度 a = eE/m', P.sci(x.aAcc, 2) + ' m/s²'],
-        ['峰值速率', P.sci(x.vpeak, 2) + ' m/s'], ['平均速率 v̄', P.sci(x.vavg, 2) + ' m/s'], ['v̄ 随时间', '不变化']];
+      case 'sawtooth': return [['导线两端电压 U', P.fmt(st.Useg, 2) + ' V（5 m 长的一段）'],
+        ['场强 E = U/L', P.fmt(x.EfieldV, 3) + ' V/m'],
+        ['加速度 a = eE/m', P.sci(x.aAcc, 2) + ' m/s²'],
+        ['峰值速率 v_max', P.sci(x.vpeak, 2) + ' m/s'],
+        ['平均速率 v̄', P.sci(x.vavg, 2) + ' m/s'],
+        ['v̄ 随时间', '不变化（这就是"恒定"）']];
       case 'steady': return [['当前电流类型', x.mode === 1 ? '恒定电流' : '交变电流'], ['大小', x.mode === 1 ? '不随时间变化' : '随时间变化'],
         ['方向', x.mode === 1 ? '不随时间变化' : '随时间变化']];
-      case 'define': return [['电流 I', P.fmt(st.Idefine, 2) + ' A'], ['时间 t', P.fmt(st.tdefine, 1) + ' s'],
+      case 'define': return [['电源电压 U', P.fmt(st.dU, 2) + ' V'], ['外电阻 R', P.fmt(st.dR, 1) + ' Ω'],
+        ['电流 I = U/R', P.fmt(x.Idefine, 2) + ' A'], ['时间 t', P.fmt(st.tdefine, 1) + ' s'],
         ['电荷量 q = It', P.fmt(x.qDefine, 3) + ' C'], ['电子数 n = q/e', P.sci(x.nDefine, 2) + ' 个']];
       case 'units': return [['当前单位', x.unitName], ['数值', P.fmt(st.Iunit, 2) + ' ' + x.unitName],
         ['换算为 A', P.sci(x.Iampere, 3) + ' A'], ['练习1 电荷量', '1.6×10⁻⁴ C'], ['练习1 电子数', '1.0×10¹⁵ 个']];
@@ -2922,7 +3013,7 @@
         ['合计 q = |q₁|+|q₂|', P.fmt(x.qsum, 1) + ' C'], ['电流方向', '与正离子移动方向相同']];
       case 'micro': return [['时间 t 占比', P.fmt(st.tFrac, 2)], ['电子柱长度 vt', '已点亮 ' + x.chainOn + ' / 4 步'],
         ['n 的意义', '单位体积内的自由电子数']];
-      case 'driftnum': return [['电流 I', P.fmt(st.Idrift, 1) + ' A'], ['电子数密度 n', P.sci(x.nCu, 2) + ' m⁻³'],
+      case 'driftnum': return [['电源电压 U', P.fmt(st.cU, 2) + ' V'], ['电流 I = U/R', P.fmt(x.Idrift, 2) + ' A'], ['电子数密度 n', P.sci(x.nCu, 2) + ' m⁻³'],
         ['定向速率 v', P.sci(x.vDrift, 2) + ' m/s'], ['穿过 1 m 需', P.fmt(x.tTransit / 3600, 2) + ' 小时']];
       case 'lightspeed': return [['导线长度 L', P.fmt(x.Lwire, 0) + ' m'], ['电场建立 L/c', P.sci(x.tField, 2) + ' s'],
         ['电子跑完 L/v', P.fmt(x.tTransit / 3600, 2) + ' 小时'], ['两者相差', P.sci(x.tTransit / x.tField, 1) + ' 倍']];
@@ -3499,6 +3590,42 @@
       if (!ok2) fails.push(Rz[Rz.length - 1]);
       A.t = svT; A.playing = svP; A.frozen = svF;
       if (A.playing) A.startLoop();
+      return { pass: fails.length === 0, total: Rz.length, failed: fails.length, results: Rz, fails: fails };
+    },
+    /* ===== 恒压电源链专项自检 =====
+       本课面对的是**恒定电源**（U 不变），一切量都必须从 U 推出来：
+         U → I = U/R → v = I/(nqS) → 屏幕速度
+       并且：调 U 时 Q = CU 必须跟着变；调 R 时 Q 必须**不变**（U 没动）。 */
+    verifyVoltageChain: function () {
+      var Pz = P, Rz = [], fails = [];
+      function chk(name, ok, got, want) {
+        Rz.push({ name: name, got: got, want: want, ok: !!ok });
+        if (!ok) fails.push(Rz[Rz.length - 1]);
+      }
+      var sv = { eV: st.eV, eR: st.eR, step: st.step };
+      st.step = 3;                       /* 切到"电源"步（场景电流 = I = U/R）再验证 */
+      /* ① U → I → v 严格成比例 */
+      st.eV = 2; st.eR = 3; var a = derive(st);
+      st.eV = 6; st.eR = 3; var b = derive(st);
+      st.eV = 12; st.eR = 3; var c = derive(st);
+      chk('U 加倍 ⇒ I 加倍', Math.abs(b.Isteady / a.Isteady - 3) < 1e-9, b.Isteady / a.Isteady, 3);
+      chk('U 加倍 ⇒ v 加倍', Math.abs(c.vDrift / a.vDrift - 6) < 1e-9, c.vDrift / a.vDrift, 6);
+      chk('U 加倍 ⇒ 屏幕速度加倍', Math.abs(b.vPx / a.vPx - 3) < 1e-9, b.vPx / a.vPx, 3);
+      /* ② 调 U：Q = CU 跟着变（这才是恒压源） */
+      chk('U 加倍 ⇒ 极板电荷量 Q 加倍', Math.abs(b.Qplate / a.Qplate - 3) < 1e-9, b.Qplate / a.Qplate, 3);
+      /* ③ 调 R：U 不变 ⇒ Q 不变，只有 I 变 */
+      st.eV = 6; st.eR = 3; var d = derive(st);
+      st.eV = 6; st.eR = 6; var e = derive(st);
+      chk('只调 R ⇒ 极板电荷量 Q 不变', Math.abs(e.Qplate - d.Qplate) < 1e-15, e.Qplate - d.Qplate, 0);
+      chk('只调 R ⇒ 电流按 1/R 变', Math.abs(d.Isteady / e.Isteady - 2) < 1e-9, d.Isteady / e.Isteady, 2);
+      /* ④ 恒定电流的判据：U 与 R 不变 ⇒ I 不随时间变化 */
+      chk('U、R 不变 ⇒ 电流恒定（不随时间变）', Pz.currentFromU(6, 3) === Pz.currentFromU(6, 3), 'I 恒定', 'I 恒定');
+      /* ⑤ 场强由电压决定，不是旋钮 */
+      chk('E = U/L（U=6 V、L=0.1 m ⇒ 60 V/m）', Pz.fieldFromU(6, 0.1), 60, 1e-12);
+      /* ⑥ 定义式 I = q/t 与 I = U/R 必须自洽 */
+      st.dU = 4; st.dR = 2; st.tdefine = 5; var f = derive(st);
+      chk('I = U/R 与 q = It 自洽', f.qDefine / st.tdefine, f.Idefine, 1e-12);
+      st.eV = sv.eV; st.eR = sv.eR; st.step = sv.step;
       return { pass: fails.length === 0, total: Rz.length, failed: fails.length, results: Rz, fails: fails };
     },
     /* ===== 动画三条要求的专项自检 ===== */
